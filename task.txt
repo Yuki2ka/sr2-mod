@@ -1,0 +1,9 @@
+investigate possibility to write and headless debug mod for game Space Rangers HD A War Apart.
+
+create simple mod that add dialog to science base "Научная база". 
+
+if you cant compile .scr in sandbox - make py scripts to run tools that i will run on windows machine.
+
+
+
+
