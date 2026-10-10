@@ -1,0 +1,39 @@
+// Функции, которые вызывает сама игра (имена фиксированы):
+//   onInit        — при старте скрипта в новой игре;
+//   onTurn        — каждый игровой ход;
+//   onDialogBegin — при открытии диалога (станции, планеты, корабля);
+//   onGlobal      — каждый ход независимо от состояния скрипта.
+// Пустому телу нужен хотя бы комментарий "//;".
+
+export function onInit() {
+  //;
+}
+
+export function onTurn() {
+  //;
+}
+
+export function onDialogBegin() {
+    if (GetShipRuins(Player()) > 0) {
+        vStationType = ShipType(GetShipRuins(Player()));
+
+        // 'SB' — строковый тип Научной базы. AddDialogInject добавляет пункт
+        // в текущее меню станции, а первый аргумент — имя диалога, который
+        // запустится по клику (не цель инъекции).
+        if (vStationType == 'SB') {
+            AddDialogInject('DialogSbHello', '', "Спросить о текущих исследованиях", 1);
+        }
+
+        // Диагностика: реальный ShipType любой станции, выключено по умолчанию.
+        if (vProbe) {
+            AddDialogInject('DialogSbProbe', '', Format("[SB probe] type=<0>", "<0>", vStationType), 1);
+        }
+    }
+}
+
+export function onGlobal() {
+    // Стартуем один раз за партию: GCntRun(GScriptName) — число запусков скрипта.
+    if (!GCntRun(GScriptName)) {
+        GRun();
+    }
+}

@@ -1,0 +1,13 @@
+// SbHello — мод для Space Rangers HD: A War Apart.
+// Добавляет пункт меню и короткую реплику в диалог Научной базы (ShipType == 'SB').
+//
+// Точка входа скрипта: имя + подключение модулей (порядок import не важен).
+// Имя здесь, "name" в srmod.json и имя файла build/DATA/Script/<Name>.scr
+// обязаны совпадать — это проверяет сборка.
+scriptName("SbHello");
+
+import from './vars.rsm';      // переменные
+import from './world.rsm';     // звёзды, планеты, корабли, группы
+import from './states.rsm';    // состояния — поведение групп
+import from './dialogs.rsm';   // диалоги
+import from './code.rsm';      // функции, которые вызывает игра

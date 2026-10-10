@@ -228,3 +228,94 @@ Verified from tool sources this session: `rsmc` CLI signature; all `.rsm` syntax
 
 Still open, because I cannot run the game or the Windows toolchain here: the `'SB'` token (probe resolves it), whether `rsmc` requires an `onTurn`, the `AddDialogInject` 2nd/4th argument semantics (I copied the verified call shape rather than guess), and the exact BlockPar key layout — which is why the script emits `--lang-txt` and defers the DAT merge to `BlockParEditor` instead of hand-rolling bytes I can't test.
 
+
+================================================================================
+## ADDENDUM (second pass) — open questions closed, mod written
+
+Everything above still stands as the feasibility case. This pass turned the
+draft into a real, lint-clean project and closed most of the "still open" list.
+
+### Resolved
+
+**1. `'SB'` is the Science base. Two independent machine-readable sources.**
+   - sr-modkit ships `data/lexicon.json`: 977 functions with descriptions and
+     arity, built from a corpus of 330 decompiled SRHD mods (183 657 observed
+     calls). Its `ShipType` examples are verbatim real code, and the first is
+     `if(ShipType(GetShipRuins(Player()))=='SB' || ShipType(GetShipRuins(Player()))=='CB')`
+     — the exact shape we need, from a working mod.
+   - `rsmc`'s own VS Code grammar (`rsmc.rsm-language-0.1.0`) enumerates the
+     built-in constants and contains `t_SB` alongside `t_PB`, `t_UB`, `t_WB`,
+     `t_RC`, `t_MC`, `t_BK`, `t_CB`.
+   The probe is kept anyway (off by default, `vProbe = 1`) because it costs
+   nothing and answers the question in one playthrough if `'SB'` is wrong.
+   Details and the full token table: docs/STATIONS.md
+
+**2. `AddDialogInject` semantics.** XenoModKit issue #17 quotes the engine
+   sources: the first argument lands in `Entry.DialogName` and is used only when
+   the injected answer is clicked — it is a **jump target**, not the injection
+   target. The item is added to whatever station menu is open, so the target is
+   chosen by the surrounding guards (`GetShipRuins(Player()) > 0` +
+   `ShipType(...) == 'SB'`), exactly as the first pass guessed. Full signature
+   (arg1 dialog, arg2 greeting add, arg3 answer text, arg4 priority) confirmed
+   by `data/lexicon.json`.
+
+**3. Only one Windows-only dependency: `rsmc.exe`.** New find —
+   https://github.com/ArtYudin89/sr-modkit is a pure-Python toolkit that
+   scaffolds (`srmod new`), lints against a schema extracted from `rsmc.exe`
+   itself, builds (`srmod build`), and deploys (junction). It writes
+   `Lang.dat`, `Main.dat` and `CacheData.dat` with its own vendored BlockPar
+   implementation, so BlockParEditor is out of the loop entirely. It only shells
+   out to `rsmc.exe` for `.rsm -> .scr`. Chosen as the primary pipeline;
+   XenoModKit stays as the optional auditor.
+
+**4. Encoding rule corrected.** The first pass said ".rsm is UTF-8 with BOM,
+   CRLF" (true of the RScript `Example/` files). sr-modkit refuses a BOM
+   outright (`assert_rsm_is_utf8`). Rule now: `.rsm` = UTF-8 **without** BOM,
+   `src/**/*.txt` = **UTF-16LE + BOM**. `tools/compile.py --fix-encodings`
+   enforces both, and its preflight reproduces sr-modkit's gates with
+   actionable messages.
+
+**5. The Lang.dat merge is not hand-rolled any more.** `srmod build` stages a
+   `Lang.txt` containing an empty `Script ^{ SbHello ^{ } }` skeleton, lets
+   rsmc merge its `text:` table into it, then converts the result to
+   `Lang.dat` itself. The old draft's "merge the TXT into Lang.dat with
+   BlockParEditor by hand" step is gone.
+
+### Bugs in the first-pass draft, fixed here
+
+- `DialogSbProbe` was injected but never declared with `dialog()`.
+- `dialog("DialogSbHello", {message: ...})` replaced by the `{code: function()
+  { DChange('MsgSbHello'); exit; }}` form used by sr-modkit's known-good
+  scaffold; `DChange`/`DAdd` now take **names**, not indices, so reordering
+  declarations cannot break them.
+- No `world.rsm`: an RScript script needs star/planet/ship/group to start.
+  Added a minimal world with an empty group (`countMin/countMax = 0`) so nothing
+  spawns.
+- `answerCommand: "restart"` instead of `exit`/`fastexit`: XenoModKit's
+  `dialog-fastexit-on-station` says `fastexit` does not close the branch
+  reliably on planets and stations.
+- No typographic dashes in visible text (CP1251 has them, the game's bitmap
+  fonts may not).
+
+### Verified here, headlessly
+
+- `srmod lint mods/SbHello` → "OK: замечаний нет" (zero findings), which
+  includes the DSL check against the tables extracted from `rsmc.exe`.
+- All `.rsm` are UTF-8 without BOM; all `src/**/*.txt` are UTF-16LE+BOM —
+  checked with sr-modkit's own gate functions.
+- `scriptName` == `srmod.json:name` == entry path.
+- `tools/compile.py --fix-encodings` round-trip: on a deliberately broken copy
+  it found 3 problems, fixed all 3, and lint was clean again.
+
+### Still open (one Windows step + one playthrough)
+
+1. `rsmc.exe` has never been run — it is Win32 and the sandbox has no Wine.
+   `tools/compile.py` refuses the build stage off-Windows with a clear message
+   instead of a confusing crash.
+2. The in-game test: does the item appear on a Science base? Static checks
+   cannot prove runtime behaviour.
+3. Whether `'CB'` is needed alongside `'SB'` (a real mod tested both).
+4. Junction deployment (`srmod deploy`) and save/other-mod compatibility.
+
+One command closes 1 and 3: `tools\run_compile.cmd`. Number 2 needs a new game
+with the mod enabled. See docs/VERIFICATION.md.

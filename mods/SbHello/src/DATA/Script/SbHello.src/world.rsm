@@ -1,0 +1,15 @@
+// Мир скрипта. RScript-скрипт всегда описывает свою систему: без star/planet/
+// ship/group скрипт не стартует. Здесь система нужна только как "точка опоры",
+// поэтому группа пустая (countMin/countMax = 0) и никого не создаёт.
+
+// Звезда, в которой живёт скрипт (имя — для ссылок из этого же скрипта).
+star("SbStar", {noKling: false, noComeKling: false});
+
+planet("SbPlanet", {star: "SbStar", race: ["Maloc", "Peleng", "People", "Fei", "Gaal"], owner: ["Maloc", "Peleng", "People", "Fei", "Gaal"], economy: ["Agriculture", "Industrial", "Mixed"], government: ["Anarchy", "Dictatorship", "Monarchy", "Republic", "Democracy"], rangeMin: 0, rangeMax: 100});
+
+// Требование к кораблю ИГРОКА (player: true): скрипт стартует, когда игрок
+// под него подходит. Перечислены все обычные типы, чтобы подходил любой корабль.
+ship({star: "SbStar", player: true, count: 1, owner: ["Maloc", "Peleng", "People", "Fei", "Gaal"], type: ["Ranger", "Warrior", "Pirate", "Transport", "Liner", "Diplomat"], speedMin: 0, speedMax: 10000, weapon: 0, cargoHook: 0, emptySpace: 0, statusTraderMin: 0, statusTraderMax: 100, statusWarriorMin: 0, statusWarriorMax: 100, statusPirateMin: 0, statusPirateMax: 100, strengthMin: 0, strengthMax: 0, ruins: ""});
+
+// Пустая группа: держит связи planet -> state, но кораблей не создаёт.
+group("SbGroup", {planet: "SbPlanet", state: "SbIdle", owner: ["Maloc", "Peleng", "People", "Fei", "Gaal"], type: ["Ranger"], countMin: 0, countMax: 0, speedMin: 100, speedMax: 10000, weapon: 0, cargoHook: 0, emptySpace: 0, addPlayer: false, statusTraderMin: 0, statusTraderMax: 100, statusWarriorMin: 0, statusWarriorMax: 100, statusPirateMin: 0, statusPirateMax: 100, distSearch: 10000, strengthMin: 0, strengthMax: 0, ruins: ""});

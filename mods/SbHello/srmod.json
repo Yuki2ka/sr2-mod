@@ -1,0 +1,17 @@
+{
+  "name": "SbHello",
+  "install": "Mods/SbHello",
+  "languages": [
+    "Rus"
+  ],
+  "primary_lang": "Rus",
+  "script": {
+    "engine": "rsmc",
+    "entry": "src/DATA/Script/SbHello.src/main.rsm"
+  },
+  "media": {
+    "gi_format": "argb",
+    "gai_format": "delta"
+  },
+  "packages": []
+}

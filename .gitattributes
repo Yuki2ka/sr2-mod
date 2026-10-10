@@ -1,0 +1,20 @@
+# The game reads src/**/*.txt as UTF-16LE (BOM). Treat them as binary so git
+# never rewrites line endings or tries to diff them as text: a single LF->CRLF
+# pass corrupts every Cyrillic string, and the build does NOT complain.
+mods/*/src/*.txt binary
+mods/*/src/**/*.txt binary
+
+# Compiled game formats.
+*.scr binary
+*.dat binary
+*.gi binary
+*.gai binary
+*.hai binary
+*.pkg binary
+
+# Sources: deterministic line endings in every checkout.
+*.rsm text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.cmd text eol=crlf
