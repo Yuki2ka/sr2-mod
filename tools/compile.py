@@ -22,7 +22,15 @@ ENV FALLBACKS (used when the matching argument is omitted)
   SR2_RSMC         path to rsmc.exe
   SR2_GAME         path to the game install root (the dir containing Mods/)
   SR2_MODKIT_ROOT  path to the SRHD-XenoModKit clone (optional audit)
+  SR2_DECOMPILER   path to a rson-decompiler clone (only for mods with media)
+  SR2_MOD_DIR      the mod to build (default mods/SbHello)
   PYTHON           python interpreter used to run sr-modkit / ModKit
+
+rsmc.exe and rson-decompiler are auto-detected next to the sr-modkit clone
+(C:\tools\rsmc\rsmc.exe, C:\tools\rson-decompiler\...) when not given explicitly.
+A mod without images or packages needs no real decompiler: `srmod build` only
+asks for one unconditionally (run_media opens the tree after the check), so
+tools/stubs/noop-decompiler is passed instead and the build goes through.
 
 Exit codes: 0 ok | 1 setup/operational error | 2 lint findings or build gate
 """
@@ -30,6 +38,7 @@ Exit codes: 0 ok | 1 setup/operational error | 2 lint findings or build gate
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -38,6 +47,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MOD_DIR = REPO_ROOT / "mods" / "SbHello"
+TOOLS_DIR = Path(__file__).resolve().parent
+
+# Stand-in that satisfies `srmod build`'s "give me rson-decompiler" check for a
+# mod with no media. Its run.py fails loudly if it is ever actually called.
+STUB_DECOMPILER = TOOLS_DIR / "stubs" / "noop-decompiler"
 
 # Files the game reads only as UTF-16LE ("Notepad -> Unicode").
 UTF16_FILES_GLOB = ("**/*.txt",)
@@ -94,6 +108,78 @@ def to_utf16le(path: Path) -> bool:
     return True
 
 
+# ------------------------------------------------------------- tool discovery
+def srmod_siblings(srmod_root) -> list[Path]:
+    """Folders searched next to the sr-modkit clone (autodetect, like srmod)."""
+    if not srmod_root:
+        return []
+    root = Path(srmod_root).resolve()
+    return [root.parent / "rsmc", root.parent / "rson-decompiler",
+            root.parent / "rson_decompiler"]
+
+
+def find_rsmc(args) -> tuple[Path | None, str]:
+    """Locate rsmc.exe: --rsmc > env > next to the sr-modkit clone."""
+    if args.rsmc and Path(args.rsmc).is_file():
+        return Path(args.rsmc).resolve(), "--rsmc"
+    for var in ("SR2_RSMC", "SRMOD_RSMC"):
+        env = os.environ.get(var)
+        if env and Path(env).is_file():
+            return Path(env).resolve(), f"${var}"
+    for base in srmod_siblings(args.srmod_root):
+        cand = base / "rsmc.exe"
+        if cand.is_file():
+            return cand.resolve(), f"next to {base.parent.name}"
+    bare = Path(args.srmod_root).resolve().parent / "rsmc.exe" if args.srmod_root else None
+    if bare and bare.is_file():
+        return bare.resolve(), f"in {bare.parent}"
+    return None, "rsmc.exe not found"
+
+
+def find_decompiler(args) -> tuple[Path | None, str]:
+    """Locate a real rson-decompiler clone (its folder holds run.py)."""
+    if args.decompiler:
+        p = Path(args.decompiler)
+        if (p / "run.py").is_file():
+            return p.resolve(), "--decompiler"
+        return None, f"--decompiler {p}: no run.py inside — wrong folder"
+    for var in ("SR2_DECOMPILER", "SRMOD_DECOMPILER"):
+        env = os.environ.get(var)
+        if env and (Path(env) / "run.py").is_file():
+            return Path(env).resolve(), f"${var}"
+    srmod_name = Path(args.srmod_root).resolve().name if args.srmod_root else "sr-modkit"
+    for base in srmod_siblings(args.srmod_root):
+        if (base / "run.py").is_file():
+            return base.resolve(), f"next to {srmod_name}"
+    return None, "rson-decompiler not found (only needed for mods with media)"
+
+
+def media_needs(mod_dir: Path) -> list[str]:
+    """src/ entries that require the real srgi/srpkg encoders."""
+    src = mod_dir / "src"
+    needs: list[str] = []
+    if not src.is_dir():
+        return needs
+    if any(src.rglob("*.png")):
+        needs.append("images (src/**/*.png -> .gi)")
+    if any(src.rglob("*.gai.src")) or any(src.rglob("*.hai.src")):
+        needs.append("atlases (*.gai.src/, *.hai.src/)")
+    if any(src.rglob("*.pkg.src")):
+        needs.append("packages (*.pkg.src/)")
+    proj = read_json(mod_dir / "srmod.json")
+    pkgs = (proj.get("packages") or []) if proj else []
+    if pkgs:
+        needs.append(f'"packages" in srmod.json: {", ".join(pkgs)}')
+    return needs
+
+
+def read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+
+
 # --------------------------------------------------------------------- preflight
 def preflight(args, mod_dir: Path) -> list[str]:
     """Sanity-check the machine before any subprocess runs. Returns problems."""
@@ -127,18 +213,30 @@ def preflight(args, mod_dir: Path) -> list[str]:
 
     # 5. build stage needs rsmc.exe, and rsmc.exe is Windows-only
     if args.stage in ("build", "deploy", "all"):
-        if not args.rsmc:
+        if args.rsmc and not Path(args.rsmc).is_file():
+            problems.append(f"--rsmc {args.rsmc}: file not found.")
+        elif not args.rsmc:
             problems.append(
                 "rsmc.exe path unknown. Pass --rsmc <path> or set SR2_RSMC "
                 "(download: github.com/indiemagpie, RScript releases, rsmc.zip)."
             )
-        elif not Path(args.rsmc).is_file():
-            problems.append(f"--rsmc {args.rsmc}: file not found.")
         elif os.name != "nt":
             problems.append(
                 f"rsmc.exe is a Windows binary and this machine is {sys.platform}. "
                 "Run the build/deploy stages on Windows (or use --stage lint here)."
             )
+
+        # 5b. media needs the real rson-decompiler; a media-less mod does not
+        #     (see STUB_DECOMPILER), so only the former is a preflight error.
+        needs = media_needs(mod_dir)
+        if needs:
+            decomp, why = find_decompiler(args)
+            if not decomp:
+                problems.append(
+                    f"this mod has media/packages: {'; '.join(needs)}. "
+                    f"{why}. Clone it (github.com/ArtYudin89/rson-decompiler) and pass "
+                    "--decompiler <folder> — see docs/TOOLS.md."
+                )
 
     # 6. deploy needs the game folder
     if args.stage in ("deploy", "all"):
@@ -163,7 +261,6 @@ def preflight(args, mod_dir: Path) -> list[str]:
 
 def check_script_name(mod_dir: Path) -> tuple[bool, str]:
     """scriptName("X") in main.rsm must equal srmod.json "name"."""
-    import json
     import re
 
     cfg = mod_dir / "srmod.json"
@@ -288,6 +385,19 @@ def stage_build(args, mod_dir: Path) -> int:
     cmd = srmod_cmd(args, "build", str(mod_dir))
     if args.rsmc:
         cmd += ["--rsmc", str(Path(args.rsmc).resolve())]
+    decomp, why = find_decompiler(args)
+    if decomp:
+        cmd += ["--decompiler", str(decomp)]
+        log("build", f"decompiler: {decomp} ({why})")
+    elif not media_needs(mod_dir):
+        # srmod build asks for rson-decompiler before it looks at the tree; a
+        # mod with no images/packages never calls it, so the no-op stands in.
+        cmd += ["--decompiler", str(STUB_DECOMPILER)]
+        log("build", f"decompiler: {STUB_DECOMPILER} (no-op — no media in this mod)")
+    else:
+        die("this mod has media/packages and no rson-decompiler was found: "
+            "git clone https://github.com/ArtYudin89/rson-decompiler <folder> "
+            "and rerun with --decompiler <folder>.", 1)
     rc = run(cmd, cwd=Path(args.srmod_root), env_extra=srmod_env(args))
     if rc == 0:
         scr = sorted((build_dir / "DATA" / "Script").glob("*.scr")) if build_dir.is_dir() else []
@@ -298,10 +408,33 @@ def stage_build(args, mod_dir: Path) -> int:
 
 
 def install_rel(mod_dir: Path) -> str:
-    import json
-
-    proj = json.loads((mod_dir / "srmod.json").read_text(encoding="utf-8-sig"))
+    proj = read_json(mod_dir / "srmod.json") or {}
     return proj.get("install") or f"Mods/{proj.get('name', 'Mod')}"
+
+
+def clear_deploy_link(dest: Path) -> None:
+    """Make room at dest so a fresh junction can be created there.
+
+    `srmod deploy` only knows how to *create* the link, so a second run — or a
+    leftover from an earlier one — dies with WinError 183. os.rmdir removes the
+    reparse point itself and never follows it into the target; shutil.rmtree
+    would, and would empty build/ through the link. A real, non-empty folder
+    is not ours to delete: say so and stop.
+    """
+    if not os.path.lexists(dest):
+        return
+    try:
+        os.rmdir(dest)
+        log("deploy", f"cleared {dest} for the new junction")
+        return
+    except NotADirectoryError:
+        dest.unlink()
+        log("deploy", f"removed the file {dest}")
+        return
+    except OSError as e:
+        die(f"cannot clear {dest} for the new junction: {e}. If a real folder "
+            f"with files is sitting there, move it away and rerun, or deploy "
+            f"with --deploy-mode copy --overwrite.", 2)
 
 
 def stage_deploy(args, mod_dir: Path) -> int:
@@ -312,9 +445,16 @@ def stage_deploy(args, mod_dir: Path) -> int:
     dest = Path(args.game).joinpath(*rel.replace("\\", "/").split("/"))
 
     if args.deploy_mode == "junction":
+        clear_deploy_link(dest)
         log("deploy", f"junction {dest} -> {build_dir}")
         cmd = srmod_cmd(args, "deploy", str(mod_dir), "--game", str(Path(args.game).resolve()))
-        return run(cmd, cwd=Path(args.srmod_root), env_extra=srmod_env(args))
+        rc = run(cmd, cwd=Path(args.srmod_root), env_extra=srmod_env(args))
+        if rc == 0 and not (dest / "ModuleInfo.txt").is_file():
+            # A link can be created "successfully" and still point nowhere
+            # (that is how a dangling junction gets missed: exit 0, no mod).
+            die(f"deploy reported success, but {dest / 'ModuleInfo.txt'} is not "
+                f"readable: the link is dangling. Check that {build_dir} exists.", 2)
+        return rc
 
     log("deploy", f"copy build/ -> {dest}")
     if dest.exists():
@@ -360,6 +500,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="game install root (the folder containing Mods/)")
     p.add_argument("--modkit-root", default=os.environ.get("SR2_MODKIT_ROOT"),
                    help="SRHD-XenoModKit clone root (folder containing srhd.py)")
+    p.add_argument("--decompiler", default=os.environ.get("SR2_DECOMPILER"),
+                   help="rson-decompiler clone root (folder containing run.py); "
+                        "only needed by mods that ship images (.gi) or packages (.pkg)")
     p.add_argument("--stage", default="all", choices=("lint", "build", "deploy", "all"),
                    help="what to do")
     p.add_argument("--deploy-mode", default="junction", choices=("junction", "copy"),
@@ -391,6 +534,15 @@ def main(argv=None) -> int:
         n = fix_encodings(mod_dir)
         log("fix", f"{n} file(s) converted" if n else "nothing to convert")
         return 0
+
+    # rsmc.exe: keep --rsmc when it points at a real file, otherwise hunt for
+    # it next to the sr-modkit clone (that is where srmod autodetect looks too).
+    if args.stage in ("build", "deploy", "all"):
+        rsmc, why = find_rsmc(args)
+        if rsmc is not None:
+            if args.rsmc != str(rsmc):
+                log("preflight", f"rsmc: {rsmc} ({why})")
+            args.rsmc = str(rsmc)
 
     problems = preflight(args, mod_dir)
     if problems:

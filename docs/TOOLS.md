@@ -25,14 +25,23 @@ src/CFG/Main.txt               ──►  build/CFG/Main.dat         (script reg
 | **Python 3.9+** | runs `srmod` and the scripts in `tools/` | everything | no | https://www.python.org/downloads/windows/ |
 | **SRHD-XenoModKit** | optional second-opinion auditor (DAT/SCR/RSON, runtime lint, releases) | `--audit` | no (Windows-oriented) | https://github.com/Xenomorphchyma/SRHD-XenoModKit |
 | RScript (GUI) | node editor; only to *decompile* somebody else's `.scr` into `.rson` | `srmod open` / `srmod import` | yes | https://github.com/indiemagpie/RScript |
-| rson-decompiler | `.png -> .gi`, `.pkg` packing | media only (unused by this mod) | no | https://github.com/ArtYudin89/rson-decompiler |
+| rson-decompiler | `.png -> .gi`, `.pkg` packing | media/packages only (unused by this mod) | no | https://github.com/ArtYudin89/rson-decompiler |
 
 **This mod has no media**, so `rsmc.exe` is the only foreign binary you need.
+
+One trap worth knowing: `srmod build` asks for the `decompiler` tool *before* it
+looks at the source tree, so even a mod without images fails with
+`не найден decompiler (rson-decompiler)`. `tools/compile.py` therefore passes
+`tools/stubs/noop-decompiler` in that case — a `run.py` that is never executed
+(and refuses loudly if it ever is). A mod that *does* ship `.png`, `*.gai.src/`
+or `*.pkg.src/` needs the real clone; pass it with `--decompiler <folder>`.
 
 ## Windows install (once)
 
 1. Python 3.9+ — tick **"Add Python to PATH"** during install.
-2. Unpack `rsmc.zip` anywhere, e.g. `C:\tools\rsmc\rsmc.exe`.
+2. Unpack `rsmc.zip` anywhere, e.g. `C:\tools\rsmc\rsmc.exe`. Leaving `RSMC`
+   empty works too — `compile.py` then looks for `rsmc.exe` next to the
+   sr-modkit clone, exactly where `srmod` autodetects it.
 3. Get sr-modkit:
 
    ```bat

@@ -22,7 +22,11 @@ it says so.
 
 **The mods in this repo need exactly one foreign binary: `rsmc.exe`.**
 DAT files, the language table and `CacheData.dat` are produced by sr-modkit's
-own Python code, so there is no BlockParEditor in the loop.
+own Python code, so there is no BlockParEditor in the loop. Caveat worth
+remembering: `srmod build` still asks for the `rson-decompiler` tool even when
+the mod ships no media, so `tools/compile.py` passes
+`tools/stubs/noop-decompiler` (a `run.py` that never gets called) — a mod with
+images or packages needs the real clone, see `docs/TOOLS.md`.
 
 Setup details, install commands and the reference data files each tool ships:
 → **[docs/TOOLS.md](docs/TOOLS.md)**
@@ -137,5 +141,6 @@ Non-negotiable conventions:
 * `mods/SbHello` passes `srmod lint` with zero findings and all encoding gates.
 * `'SB'` (Science base) is confirmed from real mod code and `rsmc`'s constants —
   `docs/STATIONS.md` has the evidence and a `vProbe` diagnostic fallback.
-* The one thing that has never run here is `rsmc.exe` (Windows-only) and the
-  in-game test. Both closed by running `tools/run_compile.cmd` once.
+* Build and deploy have both run green on Windows with `rsmc.exe` in the loop;
+  what is left is the in-game test: enable the mod, start a NEW game, dock at a
+  Science base (see `docs/VERIFICATION.md`).

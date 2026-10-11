@@ -59,6 +59,11 @@ The install path (`Mods/SbHello` by default) lives in `srmod.json` → `install`
 and it is baked into `CacheData.dat` at build time. Change it there, rebuild,
 redeploy.
 
+Re-running deploy is safe: whatever occupies `Mods\<Mod>` is cleared first —
+but only the link itself (a junction is removed with `os.rmdir`, never with a
+recursive delete, which would empty `build/` *through* the link), and the new
+link is verified to resolve before the stage reports success.
+
 ## 5. Test in game
 
 1. Start the game → **Mods** → enable the mod → **start a NEW game** (mods do
@@ -94,6 +99,10 @@ python -B srhd.py lang coverage build --base Rus --json
 | text is mojibake | a `src/**/*.txt` is not UTF-16LE — `--fix-encodings` |
 | build passes, rsmc printed a `warning:` | `srmod build` treats warnings as errors on purpose: a warning means the text table was not merged |
 | the menu item never appears | script did not start, or the station is not `'SB'` — see `docs/STATIONS.md` |
+| build stops with `не найден decompiler (rson-decompiler)` | `srmod build` wants a `decompiler` tool even for media-less mods — `tools/compile.py` covers that with a no-op stub; add images or `packages` and you need the real clone (see `docs/TOOLS.md`) |
+| `--rsmc <path>: file not found` | `rsmc.exe` moved: fix `RSMC` in `run_compile.py`, or leave it empty and let `compile.py` find `rsmc.exe` next to the sr-modkit clone |
+| `deploy failed` / `WinError 183: Cannot create a file when that file already exists` | `<game>\Mods\<Mod>` already exists — `srmod deploy` can only *create* a link, not replace one. `compile.py` now clears it first; a real folder with files inside is refused (move it away, or use `--deploy-mode copy --overwrite`) |
+| deploy exits 0 but the game shows no mod | the junction is dangling (its target was moved or never existed). `compile.py` now fails loudly if `ModuleInfo.txt` is not readable through the link. `cmd /c dir /AL "<game>\Mods"` prints the target in brackets |
 
 ## Repo hygiene
 

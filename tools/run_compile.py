@@ -24,14 +24,23 @@ from pathlib import Path
 MOD_DIR = r""
 
 # sr-modkit clone: the folder that contains srmod\ (and its own README.md).
-SRMOD_ROOT = r"C:\tools\sr-modkit"
+SRMOD_ROOT = r"C:\Games\sr-modkit"
 
-# rsmc.exe — the only foreign binary needed. Download: github.com/indiemagpie
+# rsmc.exe — the only foreign binary this mod needs (see DECOMPILER below for
+# the exception). Download: github.com/indiemagpie
 # -> RScript releases -> rsmc.zip, unpack anywhere, point here.
-RSMC = r"C:\tools\rsmc\rsmc.exe"
+# Left empty, compile.py looks for rsmc.exe next to the sr-modkit clone.
+RSMC = r"C:\Games\sr-rsmc\rsmc.exe"
 
 # Game install root: the folder that contains Mods\ and the game exe.
 GAME_DIR = r"C:\Games\Space Rangers HD A War Apart"
+
+# Optional: rson-decompiler clone (the folder that contains run.py). Only needed
+# when the mod ships images (.png -> .gi), atlases (*.gai.src/) or packages
+# (*.pkg.src/). SbHello has none, so leave this empty: compile.py then passes a
+# no-op stub that satisfies srmod's unconditional tool check.
+# Clone if you ever add media: git clone github.com/ArtYudin89/rson-decompiler
+DECOMPILER = r""
 
 # Optional: SRHD-XenoModKit clone (the folder that contains srhd.py).
 # Used only when DO_AUDIT is True. Leave empty to skip the audit.
@@ -94,6 +103,8 @@ def main() -> int:
         argv += ["--rsmc", RSMC]
     if GAME_DIR:
         argv += ["--game", GAME_DIR]
+    if DECOMPILER:
+        argv += ["--decompiler", DECOMPILER]
     if MODKIT_ROOT:
         argv += ["--modkit-root", MODKIT_ROOT]
     if OVERWRITE_COPY:

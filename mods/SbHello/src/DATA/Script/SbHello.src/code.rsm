@@ -14,19 +14,26 @@ export function onTurn() {
 }
 
 export function onDialogBegin() {
+    // ДИАГНОСТИКА (vProbe = 1). Вне всех условий: если этот пункт появится
+    // в любом диалоге — значит onDialogBegin вообще вызывается. Сам текст
+    // показывает, что вернула GetShipRuins(Player()).
+    if (vProbe) {
+        AddDialogInject('DialogSbProbe', '', Format("probe: ruins=<0>", "<0>", GetShipRuins(Player())), 1);
+    }
+
     if (GetShipRuins(Player()) > 0) {
         vStationType = ShipType(GetShipRuins(Player()));
+
+        // ДИАГНОСТИКА: реальный ShipType любой станции (внутри условия > 0).
+        if (vProbe) {
+            AddDialogInject('DialogSbProbe', '', Format("probe: type=<0>", "<0>", vStationType), 1);
+        }
 
         // 'SB' — строковый тип Научной базы. AddDialogInject добавляет пункт
         // в текущее меню станции, а первый аргумент — имя диалога, который
         // запустится по клику (не цель инъекции).
-        if (vStationType == 'SB') {
+        if (vStationType == 'SB' || vStationType == 'CB') {
             AddDialogInject('DialogSbHello', '', "Спросить о текущих исследованиях", 1);
-        }
-
-        // Диагностика: реальный ShipType любой станции, выключено по умолчанию.
-        if (vProbe) {
-            AddDialogInject('DialogSbProbe', '', Format("[SB probe] type=<0>", "<0>", vStationType), 1);
         }
     }
 }
@@ -35,5 +42,12 @@ export function onGlobal() {
     // Стартуем один раз за партию: GCntRun(GScriptName) — число запусков скрипта.
     if (!GCntRun(GScriptName)) {
         GRun();
+
+        // ДИАГНОСТИКА: сообщение на панели уведомлений доказывает, что скрипт
+        // вообще стартовал (onGlobal вызвался, GRun выполнился). Если его нет
+        // в новостях — скрипт не запущен, и дело не в типе станции.
+        if (vProbe) {
+            Ether(0, '', "SbHello: onGlobal -> GRun, скрипт запущен");
+        }
     }
 }
