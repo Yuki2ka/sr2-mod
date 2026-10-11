@@ -77,13 +77,36 @@ export function onInit() {        // script start, new game
   //;                            // empty body needs at least a comment statement
 }
 export function onTurn() {}       // every game turn, while the script runs
-export function onDialogBegin() {}// a dialog opens (station, planet, ship)
+export function onDialogBegin() {}// game builds a station/planet/ship dialog
 export function onGlobal() {      // every turn, regardless of script state
     if (!GCntRun(GScriptName)) {
         GRun();                  // start this script once per playthrough
     }
 }
 ```
+
+### Keep a dialog-injection script alive
+
+`ship({player: true, ...})` is a template-matching requirement; it does **not**
+by itself bind the player to the running script instance. The engine removes an
+instance after a turn when it has zero script-bound ships. If `onGlobal` uses
+`if (!GCntRun(GScriptName)) GRun();`, that removed instance will not restart:
+`GCntRun` still records the first run. This produces exactly the symptom where
+an injected item appears at the first station and vanishes after leaving it.
+
+For a persistent dialog hook, make the player a member of a group:
+
+```js
+group("SbGroup", {planet: "SbPlanet", state: "SbIdle",
+      countMin: 1, countMax: 1, addPlayer: true});
+```
+
+The player counts toward the group's `1`, so no extra NPC is spawned. Keep the
+state inert if the group exists only to retain the script. On station, planet,
+and ship dialog construction, the game runs the dialog hook for each active
+script, so the hook can add its menu item again on every visit. This lifecycle
+rule was traced in the reverse-engineered engine source; still verify the final
+behavior in the target game.
 
 ## Dialogs
 

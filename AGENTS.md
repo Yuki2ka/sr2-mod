@@ -123,6 +123,12 @@ Non-negotiable conventions:
    or «quotes» (they are in CP1251 but may be missing from the game's fonts).
 8. Install path lives in `srmod.json` → `install` and is baked into
    `CacheData.dat` at build time; change it there, then rebuild and redeploy.
+9. A `ship({player: true, ...})` declaration is only a template-matching
+   requirement; it does not keep an active script instance alive. If a script
+   must survive turns (e.g. to inject station dialog options), bind the player
+   into a group with `addPlayer: true` and `countMin/countMax: 1`. The engine
+   deletes instances with zero bound ships after a turn, and `GCntRun` still
+   remembers the initial start.
 
 ## 6. Verification policy
 
@@ -138,9 +144,12 @@ Non-negotiable conventions:
 
 ## 7. Current state
 
-* `mods/SbHello` passes `srmod lint` with zero findings and all encoding gates.
 * `'SB'` (Science base) is confirmed from real mod code and `rsmc`'s constants —
-  `docs/STATIONS.md` has the evidence and a `vProbe` diagnostic fallback.
-* Build and deploy have both run green on Windows with `rsmc.exe` in the loop;
-  what is left is the in-game test: enable the mod, start a NEW game, dock at a
-  Science base (see `docs/VERIFICATION.md`).
+  `docs/STATIONS.md` has the evidence; `vProbe = 1` remains enabled for testing.
+* A one-time probe report exposed the empty-group lifecycle bug. `SbGroup` now
+  binds the player as its sole member (`countMin/countMax = 1`, `addPlayer =
+  true`); the reverse-engineered source shows this prevents the engine from
+  deleting the script instance after a turn. See `docs/VERIFICATION.md`.
+* Latest `.rsm` sources pass `srmod lint` with zero findings. The prior revision
+  passed Windows build/deploy; the latest source change must be rebuilt on
+  Windows and retested in a NEW game at RC and a Science base.

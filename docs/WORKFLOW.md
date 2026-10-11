@@ -68,8 +68,15 @@ link is verified to resolve before the stage reports success.
 
 1. Start the game → **Mods** → enable the mod → **start a NEW game** (mods do
    not apply to existing saves).
-2. Fly to a Science base (Научная база) and talk to it.
-3. The menu should contain **"Спросить о текущих исследованиях"**.
+2. The first station may be the Ranger Centre. With `vProbe = 1`, a probe at
+   RC is expected; it reports the current station, not a failure of the Science
+   base check. Then travel to a Science base and talk to it.
+3. At the Science base the probe should report `SB` (or `CB`) and the menu
+   should contain **"Спросить о текущих исследованиях"**.
+4. To verify the reported lifecycle bug is fixed, leave and dock again (advance
+   a turn if needed): the probe should still be injected. The script binds the
+   player as its sole group member so the game does not discard the script after
+   its first turn. Details: [`docs/STATIONS.md`](STATIONS.md).
 
 ## 6. Optional second opinion
 
@@ -98,7 +105,7 @@ python -B srhd.py lang coverage build --base Rus --json
 | replicas are empty / show `Script.SbHello.3` | Lang table not merged, or `Script/SbHello` created by hand in `Lang.txt` |
 | text is mojibake | a `src/**/*.txt` is not UTF-16LE — `--fix-encodings` |
 | build passes, rsmc printed a `warning:` | `srmod build` treats warnings as errors on purpose: a warning means the text table was not merged |
-| the menu item never appears | script did not start, or the station is not `'SB'` — see `docs/STATIONS.md` |
+| the menu item never appears, or the probe appeared only at the first dock | check that the station is `SB`/`CB`, and that `SbGroup` binds the player (`countMin/countMax: 1`, `addPlayer: true`); an unbound zero-ship script is deleted after a turn and the one-time `GCntRun` guard will not restart it — see `docs/STATIONS.md` |
 | build stops with `не найден decompiler (rson-decompiler)` | `srmod build` wants a `decompiler` tool even for media-less mods — `tools/compile.py` covers that with a no-op stub; add images or `packages` and you need the real clone (see `docs/TOOLS.md`) |
 | `--rsmc <path>: file not found` | `rsmc.exe` moved: fix `RSMC` in `run_compile.py`, or leave it empty and let `compile.py` find `rsmc.exe` next to the sr-modkit clone |
 | `deploy failed` / `WinError 183: Cannot create a file when that file already exists` | `<game>\Mods\<Mod>` already exists — `srmod deploy` can only *create* a link, not replace one. `compile.py` now clears it first; a real folder with files inside is refused (move it away, or use `--deploy-mode copy --overwrite`) |

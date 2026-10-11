@@ -289,8 +289,9 @@ draft into a real, lint-clean project and closed most of the "still open" list.
   scaffold; `DChange`/`DAdd` now take **names**, not indices, so reordering
   declarations cannot break them.
 - No `world.rsm`: an RScript script needs star/planet/ship/group to start.
-  Added a minimal world with an empty group (`countMin/countMax = 0`) so nothing
-  spawns.
+  The initial version added a minimal world with an empty group
+  (`countMin/countMax = 0`) so nothing spawned; the third-pass addendum below
+  records why that zero-ship group had to be replaced with a player binding.
 - `answerCommand: "restart"` instead of `exit`/`fastexit`: XenoModKit's
   `dialog-fastexit-on-station` says `fastexit` does not close the branch
   reliably on planets and stations.
@@ -319,3 +320,71 @@ draft into a real, lint-clean project and closed most of the "still open" list.
 
 One command closes 1 and 3: `tools\run_compile.cmd`. Number 2 needs a new game
 with the mod enabled. See docs/VERIFICATION.md.
+
+
+================================================================================
+## ADDENDUM (third pass) — why the probe appeared only once
+
+### User report
+
+In the test, the probe items appeared while docked at the starting Ranger
+Centre (RC). After undocking and docking again, neither probe nor the Science
+base item appeared. The player starting at RC was suspected to be the cause.
+
+The RC start is normal and is not the cause. `vProbe` deliberately runs at any
+station, so an initial `RC` result is useful: it proves the script started and
+the dialog hook ran, but of course it does not test the `SB` condition. The
+missing later probe was a script-lifetime bug.
+
+### Root cause, traced in the reverse-engineered game source
+
+I checked the relevant paths in
+[`pakompom/SpaceRangersHD_decomp`](https://github.com/pakompom/SpaceRangersHD_decomp)
+(the source is reverse-engineered, not an official game SDK):
+
+1. `source/screens/fRuinsTalk.pas` builds station choices by calling
+   `RunDialogCode` on each active entry in `Galaxy.Scripts`. Therefore the
+   `onDialogBegin` hook is able to add its item again each time a station menu
+   is built, provided the script instance is still active.
+2. `source/game/aGalaxy.pas` runs each active script at end of turn, then
+   deletes it when `Script.Ships.Count < 1`. It also clears the template's
+   `ActiveScriptIndex`, so that template can be considered for a later start.
+3. In `source/script/aScript.pas`, `ship({player: true, ...})` is a star-level
+   ship requirement used when starting/matching a script; it does **not** add a
+   ship binding to `Script.Ships`. The group loader calls `BindShip(...,
+   GetPlayer)` only for a group with `addPlayer: true` (`IncludePlayer`).
+4. `GCntRun` reads the template's accumulated `UseCount`. It is not a query for
+   whether an instance is currently active. The old `onGlobal` guard
+   `if (!GCntRun(GScriptName)) GRun();` therefore starts only once. Once the
+   empty group caused the instance to be deleted, the nonzero run count blocked
+   its restart.
+
+That matches the symptom: first station opens, the script starts and injects
+its probe; after the zero-ship instance is collected at the end of a turn, the
+next dock has no active script to run `onDialogBegin`. The player's RC spawn is
+independent of the Science-base condition, and changing the spawn location is
+neither necessary nor desirable.
+
+### Fix applied
+
+`world.rsm` now declares `SbGroup` with `countMin: 1`, `countMax: 1`, and
+`addPlayer: true`. The engine subtracts the included player from the number of
+NPCs to create, then binds the player, so the group has one member and does not
+spawn an extra ship. Its `SbIdle` state is intentionally inert. This keeps the
+script active after its first turn, while `GCntRun` still correctly prevents
+reinitializing the one-time script.
+
+I also updated the source comments and the workflow/station/lifecycle notes so
+future edits do not turn this into a zero-ship group again. The diagnostic flag
+remains enabled; at RC the probe may report `RC`, while at a Science base it
+should report `SB` or `CB` and the research option should be visible.
+
+### Verification still required
+
+The lifecycle explanation is source-reviewed against the reverse-engineered
+files above, not proven by a new game run. The updated `.rsm` passes
+`python tools/compile.py --stage lint --srmod-root <sr-modkit-root>` here; this
+sandbox has no Windows `rsmc.exe` or game. Rebuild and deploy the current
+revision on Windows, start a **new** game, confirm the probe at RC, travel to a
+Science base and confirm the probe and research option there, then undock/redock
+to verify they recur. See `docs/VERIFICATION.md`.

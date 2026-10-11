@@ -45,23 +45,36 @@ does `if (ShipType(GetShipRuins(Player())) == 'PB') { … }`.
 Numeric types are coarse — several custom string types share them — so prefer
 the string comparison.
 
-## If the dialog still does not appear
+## Probe and the one-time-item bug
 
-Set the diagnostic flag in `mods/SbHello/src/DATA/Script/SbHello.src/vars.rsm`:
+`vProbe` is currently **on** in `mods/SbHello/src/DATA/Script/SbHello.src/vars.rsm`.
+It deliberately adds diagnostic items in dialogs so the returned ruins ID and
+station type can be read. If the player starts at the Ranger Centre, seeing
+`RC` there is expected; the player does not need to spawn at a Science base.
+At a Science base, the type probe should read `SB` (or `CB`) and the research
+item should appear.
 
-```js
-globalVar("vProbe", "int", "1");   // was 0
-```
+The report that the probe appeared only once was traced to a script-lifecycle
+bug, not to `RC` or the `'SB'` comparison. The old `SbGroup` had
+`countMin/countMax = 0` and `addPlayer = false`, so the active script had no
+bound ships. The engine removes an active script with no bound ships at the end
+of a turn. Since `onGlobal` only calls `GRun()` while `GCntRun` is zero, that
+removed script never restarted. The `ship({player:true, ...})` declaration is
+only a start-matching requirement; it does not keep the instance alive.
 
-Rebuild. At **any** station the menu will now show an item like
-`[SB probe] type=SB`, which is literally what the game returned. Then either
-put the real token into `code.rsm` (`if (vStationType == 'SB')`) or widen the
-condition to `== 'SB' || == 'CB'`, and set `vProbe` back to `0`.
+Fixed source: `SbGroup` now has `countMin = 1`, `countMax = 1`, and
+`addPlayer = true`. The player is the one group member, so this creates no NPCs
+and keeps the dialog hook active. Rebuild/redeploy, start a **new game**, then
+check the probe at RC and again at a Science base. See
+[`docs/RSM_SYNTAX.md`](RSM_SYNTAX.md#keep-a-dialog-injection-script-alive) and
+[`docs/VERIFICATION.md`](VERIFICATION.md) for what is source-verified vs still
+needs a game run.
 
 Other reasons a station dialog can stay empty:
 
-* the script never started (no `GRun()` / the player ship does not match the
-  `ship({player:true, …})` requirement in `world.rsm`);
+* the script did not start (the initial `onGlobal` `GRun()` condition failed);
+* the script has no player binding (`group(... addPlayer: true ...)`), so it is
+  deleted at the next turn;
 * `Script/<Name>` was hand-created in `Lang.txt`, so rsmc could not merge its
   text table (see `docs/RSM_SYNTAX.md`);
 * `ModCFG.txt` / the in-game mod manager still has the mod switched off, or you

@@ -39,7 +39,9 @@ export function onDialogBegin() {
 }
 
 export function onGlobal() {
-    // Стартуем один раз за партию: GCntRun(GScriptName) — число запусков скрипта.
+    // Стартуем один раз за партию. SbGroup должен держать привязку игрока:
+    // иначе движок удалит экземпляр без кораблей, а этот guard уже не даст
+    // запустить его повторно и onDialogBegin перестанет добавлять пункты меню.
     if (!GCntRun(GScriptName)) {
         GRun();
 

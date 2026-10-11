@@ -1,6 +1,8 @@
-// Мир скрипта. RScript-скрипт всегда описывает свою систему: без star/planet/
-// ship/group скрипт не стартует. Здесь система нужна только как "точка опоры",
-// поэтому группа пустая (countMin/countMax = 0) и никого не создаёт.
+// Мир скрипта. Star/planet нужны как контекст для RScript.
+// Важно: ship(player:true) ниже задаёт условие запуска, но сам по себе не
+// привязывает игрока к запущенному экземпляру скрипта. Экземпляр без связанных
+// кораблей движок удаляет после хода. Поэтому SbGroup содержит только игрока:
+// count=1 + addPlayer=true не создаёт дополнительных NPC.
 
 // Звезда, в которой живёт скрипт (имя — для ссылок из этого же скрипта).
 star("SbStar", {noKling: false, noComeKling: false});
@@ -11,5 +13,6 @@ planet("SbPlanet", {star: "SbStar", race: ["Maloc", "Peleng", "People", "Fei", "
 // под него подходит. Перечислены все обычные типы, чтобы подходил любой корабль.
 ship({star: "SbStar", player: true, count: 1, owner: ["Maloc", "Peleng", "People", "Fei", "Gaal"], type: ["Ranger", "Warrior", "Pirate", "Transport", "Liner", "Diplomat"], speedMin: 0, speedMax: 10000, weapon: 0, cargoHook: 0, emptySpace: 0, statusTraderMin: 0, statusTraderMax: 100, statusWarriorMin: 0, statusWarriorMax: 100, statusPirateMin: 0, statusPirateMax: 100, strengthMin: 0, strengthMax: 0, ruins: ""});
 
-// Пустая группа: держит связи planet -> state, но кораблей не создаёт.
-group("SbGroup", {planet: "SbPlanet", state: "SbIdle", owner: ["Maloc", "Peleng", "People", "Fei", "Gaal"], type: ["Ranger"], countMin: 0, countMax: 0, speedMin: 100, speedMax: 10000, weapon: 0, cargoHook: 0, emptySpace: 0, addPlayer: false, statusTraderMin: 0, statusTraderMax: 100, statusWarriorMin: 0, statusWarriorMax: 100, statusPirateMin: 0, statusPirateMax: 100, distSearch: 10000, strengthMin: 0, strengthMax: 0, ruins: ""});
+// Ровно один участник группы — сам игрок. При addPlayer=true движок вычитает
+// игрока из countMin прежде чем создавать NPC, поэтому здесь лишних кораблей нет.
+group("SbGroup", {planet: "SbPlanet", state: "SbIdle", owner: ["Maloc", "Peleng", "People", "Fei", "Gaal"], type: ["Ranger"], countMin: 1, countMax: 1, speedMin: 100, speedMax: 10000, weapon: 0, cargoHook: 0, emptySpace: 0, addPlayer: true, statusTraderMin: 0, statusTraderMax: 100, statusWarriorMin: 0, statusWarriorMax: 100, statusPirateMin: 0, statusPirateMax: 100, distSearch: 10000, strengthMin: 0, strengthMax: 0, ruins: ""});

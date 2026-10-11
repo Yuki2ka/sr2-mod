@@ -591,7 +591,8 @@ def finish(args, code: int) -> int:
     if code == 0 and args.stage in ("build", "deploy", "all"):
         print()
         print("NEXT: start the game -> Mods -> enable the mod -> start a NEW game.")
-        print("      Docking at a Science base should now show the new menu item.")
+        print("      With vProbe enabled, RC diagnostics are expected; at an SB/CB")
+        print("      base the probe and research item should appear. Undock/redock to retest.")
     elif code == 0:
         print("\n(sources check out; nothing was compiled)")
     if args.pause:
