@@ -5,7 +5,7 @@ Two questions from the task, two answers.
 | Question | Answer |
 |---|---|
 | Do I have to start a new game every time I change the mod? | **No.** One new game, then rebuild → load that same save forever. Details: [§1](#1-changing-the-mod-without-starting-a-new-game) |
-| Can a mod skip «Проходит время»? | **No — but it can make it much shorter.** The phase is a fixed loop of `GalaxyWarmupTurns = 300` simulated days; no config key and no script function reaches that number. What a mod *can* change is how much work each of those 300 days costs, by shrinking the galaxy: [`mods/FastGalaxy`](../mods/FastGalaxy). Details: [§2](#2-the-проходит-время-phase) |
+| Can a mod skip «Проходит время»? | **No — but it can make it much shorter.** The phase is a fixed loop of `GalaxyWarmupTurns = 300` simulated days; no config key and no script function reaches that number. What a mod *can* change is how much work each of those 300 days costs, by shrinking the galaxy: [`mods/FastGalaxy`](../mods/FastGalaxy) — **removed**; attempt + current freeze documented in [`docs/FAST_GALAXY_ATTEMPT.md`](FAST_GALAXY_ATTEMPT.md). Details: [§2](#2-the-проходит-время-phase) |
 
 Everything below is read out of the engine (a full Delphi decompilation of
 SRHD 2.1.2500) with file and routine names, so any claim can be checked. What
@@ -288,7 +288,7 @@ Star count is genuinely data-driven and mod-overridable:
   `FairanGalaxy` adds star types and background systems — all shipped as
   Lang-only mods.
 
-**`mods/FastGalaxy`** is that lever pointed the other way: a script-less
+**`mods/FastGalaxy` (removed)** was that lever pointed the other way: a script-less
 (`"script": {"engine": "none"}`) config-only mod whose whole content is
 
 ```

@@ -23,7 +23,7 @@ neither reliably — if in doubt, run:
 python tools\compile.py --fix-encodings
 ```
 
-A mod that only changes config (no script at all, like `mods/FastGalaxy`) is
+A mod that only changes config (no script at all, like `mods/FastGalaxy` (removed — see docs/FAST_GALAXY_ATTEMPT.md)) is
 legal too: `"script": {"engine": "none"}` in `srmod.json`, and only
 `ModuleInfo.txt` + `CFG/**` under `src/`.
 
@@ -41,13 +41,13 @@ resulting script text is printed and checked (see `docs/FAST_ITERATION.md` §3).
 ## 3. Build
 
 Double-click **`tools/run_compile.cmd`** — it builds every mod listed in
-`MOD_DIRS` (`mods/SbHello` and `mods/FastGalaxy` by default), keeps going after a
+`MOD_DIRS` (`mods/SbHello` by default (FastGalaxy removed)), keeps going after a
 failure, and reports one exit code for the batch. Or a single mod:
 
 ```bat
 python tools\compile.py --stage build ^
   --srmod-root C:\tools\sr-modkit --rsmc C:\tools\rsmc\rsmc.exe
-python tools\compile.py --stage build --mod-dir mods\FastGalaxy ^
+python tools\compile.py --stage build --mod-dir mods\FastGalaxy (removed — see docs/FAST_GALAXY_ATTEMPT.md) ^
   --srmod-root C:\tools\sr-modkit --rsmc C:\tools\rsmc\rsmc.exe
 ```
 
@@ -79,11 +79,10 @@ link is verified to resolve before the stage reports success.
 
 1. Start the game → **Mods** → enable the mod(s) → **«Применить»** → **start a
    new game**. One new game is enough: from then on you load the same save
-   (next section). A new game is also the only way to see `FastGalaxy` work,
+   (next section). A new game was the only way to see `FastGalaxy` work (removed — see docs/FAST_GALAXY_ATTEMPT.md),
    because the galaxy is generated once and stored in the save.
 2. Generation shows eight labels; the sixth, **«Проходит время»**, is 300
-   simulated days (`GalaxyWarmupTurns`, `aGalaxyStruct.pas:7`). With
-   `FastGalaxy` enabled there are 45 stars instead of 73, so each of those days
+   simulated days (`GalaxyWarmupTurns`, `aGalaxyStruct.pas:7`). Previously with `FastGalaxy` (removed) there were 45 stars instead of 73; each of those days
    costs less. Details and why it cannot be skipped: `docs/FAST_ITERATION.md` §2.
 3. You start docked at the ranger centre, and the **science base is in the same
    system** (generation stage 14 creates RC, science base and medical base in
@@ -147,7 +146,7 @@ python -B srhd.py lang coverage build --base Rus --json
 | text is mojibake | a `src/**/*.txt` is not UTF-16LE — `--fix-encodings` |
 | build passes, rsmc printed a `warning:` | `srmod build` treats warnings as errors on purpose: a warning means the text table was not merged |
 | the menu item never appears, or the probe appeared only at the first dock | check that the station is `SB` (only the science base — `CB` is the Dominion, see `docs/STATIONS.md`), and that `SbGroup` binds the player (`countMin/countMax: 1`, `addPlayer: true`); an unbound zero-ship script is deleted after a turn and the one-time `GCntRun` guard will not restart it |
-| «Проходит время» takes forever, or hangs | 300 warmup turns are fixed and not moddable; a heavy `onTurn`/`onGlobal` in *your* script runs 300 times there. Keep them O(1), and use `mods/FastGalaxy` to shrink the galaxy |
+| «Проходит время» takes forever, or hangs | 300 warmup turns are fixed and not moddable; a heavy `onTurn`/`onGlobal` in *your* script runs 300 times there. Keep them O(1), and previously used `mods/FastGalaxy` (removed — see docs/FAST_GALAXY_ATTEMPT.md) to shrink the galaxy |
 | new game dies during generation | `<game>\#####add.log` gets `Galaxy create exception, label = <Stage> seed = <seed>`; `label` is the internal stage (14 = stations, 16 = `BV/OnStart`, 17 = warmup, 18/19 = player setup). A star-count mod that is too aggressive dies in the layout stage — raise `GalaxyCountStars` |
 | build stops with `не найден decompiler (rson-decompiler)` | `srmod build` wants a `decompiler` tool even for media-less mods — `tools/compile.py` covers that with a no-op stub; add images or `packages` and you need the real clone (see `docs/TOOLS.md`) |
 | `--rsmc <path>: file not found` | `rsmc.exe` moved: fix `RSMC` in `run_compile.py`, or leave it empty and let `compile.py` find `rsmc.exe` next to the sr-modkit clone |

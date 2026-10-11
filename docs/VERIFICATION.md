@@ -13,7 +13,7 @@ Honest split between "proved by tooling/source review", "proved in the game" and
 | The headless build pipeline produces a mod the game accepts | `tools\run_compile.cmd` on Windows: `SbHello.scr` + `Lang.dat`, `Main.dat`, `CacheData.dat`, junction-deployed into `<game>\Mods\SbHello`, loaded by the game |
 
 The current source revision (`CFG/Main.txt` BV hooks, `vStartTurn`, the
-`'CB'` removal, `mods/FastGalaxy`) has **not** been compiled with `rsmc.exe` or
+`'CB'` removal, `FastGalaxy` (removed — see `docs/FAST_GALAXY_ATTEMPT.md`) has **not** been compiled with `rsmc.exe` or
 played yet — that is item 5 below.
 
 ## Verified by running the tools (nothing below is a guess)
@@ -24,13 +24,13 @@ Rows marked *Linux* were proved in the headless sandbox that had no game and no
 
 | Claim | How it was proved |
 |---|---|
-| Latest `srmod lint` passes on `mods/SbHello` **and** `mods/FastGalaxy` with zero findings *(Linux)* | `tools/compile.py --stage lint` per mod, and one `tools/run_compile.py` run over both (DSL check against `data/rsm-dsl.json`, extracted from `rsmc.exe`) |
+| Latest `srmod lint` passes on `mods/SbHello` with zero findings; `mods/FastGalaxy` (removed) previously passed — see `docs/FAST_GALAXY_ATTEMPT.md` | `tools/compile.py --stage lint` per mod, and one `tools/run_compile.py` run over both (DSL check against `data/rsm-dsl.json`, extracted from `rsmc.exe`) |
 | All `.rsm` are valid UTF-8 without BOM; all `src/**/*.txt` are UTF-16LE+BOM *(Linux)* | `srmod.build.assert_rsm_is_utf8` / `assert_not_utf8_datnik` over every module |
 | `scriptName("SbHello")` == `srmod.json:name` == entry path *(Linux)* | `tools/compile.py` preflight — and for a config-only mod (`"script": {"engine": "none"}`) preflight now says the name check is skipped instead of failing |
 | `src/CFG/Main.txt` is a valid DAT source and survives the build *(Linux)* | `srblockpar.read_text` → `text_to_dat` → `read_dat`: byte-identical tree |
 | The `BV/OnStart` and `BV/OnLoad` hooks execute the intended code *(Linux)* | preflight step 4b replays the engine's `ConcatenateValues` (`$8499BC`) per handler and prints the resulting text |
 | The mod's `Main.dat` merges into the game's without clobbering it *(Linux)* | simulated `TBlockParEC.MergeFrom` against a fake vanilla tree: `BV.BV = 2.1.2500` and the game's `10_Game` handlers survive, ours are appended (semantics read from `EC_BlockPar.pas:1299-1359`) |
-| `mods/FastGalaxy` builds and its `Lang.dat` overrides one value only *(Linux)* | `tools/compile.py --stage build --mod-dir mods/FastGalaxy` → `build/{CFG/Rus/Lang.dat, ModuleInfo.txt}`; read back: `GalaxyCountStars = 45`; simulated merge keeps `GalaxySizeX/GalaxySizeY/Name1` and changes 73 → 45. Preflight skips the `rsmc.exe` requirement for a script-less mod, so this one builds on **any** OS |
+| `mods/FastGalaxy` (removed) built and its `Lang.dat` overrode one value only *(Linux)* | `tools/compile.py --stage build --mod-dir mods/FastGalaxy` → `build/{CFG/Rus/Lang.dat, ModuleInfo.txt}`; read back: `GalaxyCountStars = 45`; simulated merge keeps `GalaxySizeX/GalaxySizeY/Name1` and changes 73 → 45. Preflight skips the `rsmc.exe` requirement for a script-less mod, so this one builds on **any** OS |
 | The four `Main.txt` traps are actually caught *(Linux)* | negative test: a crafted `Main.txt` with `//` in a value, a `BV` param, a `ScriptRun('Wrong')` name and an unguarded `OnLoad` fires all four; the real mods stay clean |
 | `ShipType(...) == 'SB'` is the Science base — and `'CB'` is **not** a science-base variant *(Linux read)* | the engine's own tables: `TShipType` (`aGalaxyStruct.pas:75-90`) lined up with `ShipTypeNames` (`aConst.pas:381`) via `GetTypeNameKey` (`aShip.pas:2197`) → `SB` = `rstScienceBase`, `CB` = `rstDominion`. See `docs/STATIONS.md` |
 | «Проходит время» = 300 warmup turns and is not moddable *(Linux read)* | `GalaxyWarmupTurns = 300` (`aGalaxyStruct.pas:7`) used directly by the loop in `TThreadCreateNewGame.Execute` (`screens/fGameSettings.pas`), `NewGameGenerationStage := 6` around it, `TurnToDateTime` subtracting it, and no config key reading it |
@@ -86,7 +86,7 @@ routine, so it can be re-checked in
    no new game.
 2. **That «Применить» alone is enough** after a `Main.txt`/`Lang.txt` change,
    without closing the exe.
-3. **`mods/FastGalaxy` in game**: real generation time, and whether 45 stars
+3. **`mods/FastGalaxy` (removed) in game**: never verified; freeze suspected at stage 1 due to 45 stars / 20 constellations — see `docs/FAST_GALAXY_ATTEMPT.md`
    produce a sane galaxy (constellation count is hardcoded at 20,
    `aGalaxy.pas:821`). If generation dies, `#####add.log` will say
    `Galaxy create exception, label = <Stage> seed = <seed>`.
@@ -94,7 +94,7 @@ routine, so it can be re-checked in
    `CheatCode.pas:1706`) — the mechanism is read from source, the keystrokes and
    the exact text form are not confirmed.
 5. **The current source revision on Windows**: `CFG/Main.txt`, `vars.rsm`
-   (`vStartTurn`), `code.rsm` (`'CB'` removed, probe text), and `FastGalaxy`
+   (`vStartTurn`), `code.rsm` (`'CB'` removed, probe text), and `FastGalaxy` (removed)
    have never been through `rsmc.exe`/`srmod build` on the player's machine.
 6. Interaction with other mods (star-count mods in particular change the same
    `Constellations` block — last enabled mod wins).
@@ -102,9 +102,9 @@ routine, so it can be re-checked in
 ## Next run on Windows
 
 ```bat
-tools\run_compile.cmd        :: builds SbHello and FastGalaxy, deploys both
+tools\run_compile.cmd        :: builds SbHello (FastGalaxy removed — see docs/FAST_GALAXY_ATTEMPT.md)
 ```
 
 then, in the game: Mods → enable what you want → **«Применить»** → start **one**
-new game (FastGalaxy only affects new games) → and from then on rebuild +
+new game (SbHello only needs reload; FastGalaxy removed — see docs/FAST_GALAXY_ATTEMPT.md) → and from then on rebuild +
 **load that save** for every further change.
