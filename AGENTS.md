@@ -41,6 +41,9 @@ Setup details, install commands and the reference data files each tool ships:
   `--minimal` for a bare skeleton. Start from it rather than from nothing.
 * **`mods/SbHello/`** — this repo's own example: injects a menu item into the
   Science base dialog. Shortest path through the whole pipeline.
+* **`mods/FastGalaxy/`** — a mod with **no script at all** (`"script":
+  {"engine": "none"}`): one `Constellations.GalaxyCountStars` override in
+  `CFG/Rus/Lang.txt`. The template for pure config mods.
 * **Corpus-built function dictionary** — 977 game functions with descriptions,
   arity and real call samples: `data/lexicon.json` in sr-modkit
   (built from 330 decompiled mods, 183 657 observed calls).
@@ -56,7 +59,8 @@ In this repo:
 
 * [docs/TOOLS.md](docs/TOOLS.md) — install, tool inventory, upstream reference files
 * [docs/RSM_SYNTAX.md](docs/RSM_SYNTAX.md) — verified `.rsm` reference (declarations, hooks, dialogs, injection, traps)
-* [docs/STATIONS.md](docs/STATIONS.md) — station/base type tokens (`'SB'` = Science base) and the diagnostic probe
+* [docs/FAST_ITERATION.md](docs/FAST_ITERATION.md) — **read this before changing the mod**: iterating without a new game (BV hooks, what survives a save load, what breaks it) and the «Проходит время» warmup phase (what is and is not moddable)
+* [docs/STATIONS.md](docs/STATIONS.md) — station/base type tokens, the full engine table (`'SB'` = Science base, `'CB'` = Dominion) and the diagnostic probe
 * [docs/WORKFLOW.md](docs/WORKFLOW.md) — edit → lint → build → deploy → test + troubleshooting table
 * [docs/VERIFICATION.md](docs/VERIFICATION.md) — proved by tooling vs still needs the game
 * [investigation.txt](investigation.txt) — feasibility investigation + resolved addendum
@@ -76,7 +80,9 @@ variable:
   `--rsmc`, `--game`, `--stage`, `--deploy-mode`, …). Also accepts env vars
   `SR2_SRMOD_ROOT`, `SR2_RSMC`, `SR2_GAME`, `SR2_MODKIT_ROOT`.
 * `tools/run_compile.py` — **double-click** front-end: the same values as plain
-  variables in a SETTINGS block at the top, no command line needed.
+  variables in a SETTINGS block at the top, no command line needed. `MOD_DIRS`
+  lists the mods to process (`mods/SbHello`, `mods/FastGalaxy`); one failure does
+  not stop the rest and the exit code is the worst of them.
 * `tools/run_compile.cmd` — double-click launcher, keeps the window open.
 
 ```bat
@@ -87,7 +93,8 @@ python tools\compile.py --stage lint --srmod-root C:\tools\sr-modkit
 tools\run_compile.cmd
 ```
 
-Pipeline stages: **lint** (static, rsmc DSL + traps) → **build**
+Pipeline stages: **lint** (static, rsmc DSL + traps + a replay of
+`src/CFG/Main.txt` that prints the `BV` hook texts the engine will execute) → **build**
 (`src/` → `build/`, needs `rsmc.exe`) → **deploy** (junction from
 `<game>\Mods\SbHello` to `build/` by default, so rebuilds are instant) →
 optional **audit** (XenoModKit). Full detail and the troubleshooting table:
@@ -100,7 +107,8 @@ mods/<Mod>/
   srmod.json          name, install path ("Mods/<Mod>"), languages, script entry
   src/                ALL sources (this is what gets committed)
     ModuleInfo.txt    UTF-16LE — what the player sees in the mod list
-    CFG/Main.txt      UTF-16LE — binds the script to the game
+    CFG/Main.txt      UTF-16LE — binds the script to the game (Data/Script)
+                      and registers the BV/OnStart + BV/OnLoad hooks
     CFG/<lang>/Lang.txt  UTF-16LE — own text keys; NEVER the Script/<Name> section
     DATA/Script/<Name>.src/*.rsm   UTF-8, no BOM
   build/              generated, git-ignored, game-ready
@@ -128,13 +136,40 @@ Non-negotiable conventions:
    must survive turns (e.g. to inject station dialog options), bind the player
    into a group with `addPlayer: true` and `countMin/countMax: 1`. The engine
    deletes instances with zero bound ships after a turn, and `GCntRun` still
-   remembers the initial start.
+   remembers the initial start — so never guard `GRun()` with `GCntRun`.
+10. **Start the script from `CFG/Main.txt`, not from `onGlobal`.**
+    `BV/OnStart/<handler>` runs once during generation (stage 16) and
+    `BV/OnLoad/<handler>` runs on **every save load** — that is what lets a mod
+    re-attach itself without a new game. `OnLoad` must be guarded:
+    `if(!IsScriptActive('X')) ScriptRun(..., 'X');` (`ScriptRun` takes the
+    template name from `Data/Script`, not `Script.<Name>`). Never put a param
+    named `BV` inside the `BV` block: it overwrites the game version
+    (`BV.BV = 2.1.2500`) in the merged `Main.dat`.
+11. **No `//` inside a DAT value.** The parser cuts the value at `//` (both the
+    game's and `srblockpar`'s), so the engine silently runs a truncated
+    statement. Comments in `CFG/**/*.txt` go on their own lines.
+    `tools/compile.py --stage lint` checks this on the raw file text.
+12. **Station types come from the engine table**, not from corpus examples:
+    `TShipType` (`aGalaxyStruct.pas:75`) × `ShipTypeNames` (`aConst.pas:381`) →
+    `RC PB WB SB BK MC CB UB` for ordinals 6..13. `SB` is the Science base,
+    `CB` is the Dominion. Full table in `docs/STATIONS.md`.
+13. **Variable values live in the save.** `globalVar`s (and a live instance's
+    `localVar`s) are restored **by name** on load, so an initial value changed
+    in the source applies to new games only. Renaming a `star`/`planet`/`item`
+    that a save references breaks the load (`GetStar` raises). Add, don't rename.
+14. **`onTurn` runs 300 times during new-game generation** (the warmup loop
+    calls the normal turn machinery). Keep it O(1) — a per-turn loop over stars
+    or ships is what makes the «Проходит время» phase hang.
 
 ## 6. Verification policy
 
 * Never claim runtime behaviour from a static check. Say what the tooling
   proved and what still needs the game — `docs/VERIFICATION.md` is the ledger;
   update it when something moves from "unverified" to "verified".
+* For engine questions the reference is the decompilation
+  ([pakompom/SpaceRangersHD_decomp](https://github.com/pakompom/SpaceRangersHD_decomp)):
+  cite file + routine (and the `@addr`/`@routine` tag) instead of guessing, and
+  distinguish "read from source" from "observed in game".
 * `rsmc` warnings are errors: a warning means the text table was not merged and
   the mod ships mute.
 * Prefer a new output file over overwriting an existing one.
@@ -144,12 +179,21 @@ Non-negotiable conventions:
 
 ## 7. Current state
 
-* `'SB'` (Science base) is confirmed from real mod code and `rsmc`'s constants —
-  `docs/STATIONS.md` has the evidence; `vProbe = 1` remains enabled for testing.
-* A one-time probe report exposed the empty-group lifecycle bug. `SbGroup` now
-  binds the player as its sole member (`countMin/countMax = 1`, `addPlayer =
-  true`); the reverse-engineered source shows this prevents the engine from
-  deleting the script instance after a turn. See `docs/VERIFICATION.md`.
-* Latest `.rsm` sources pass `srmod lint` with zero findings. The prior revision
-  passed Windows build/deploy; the latest source change must be rebuilt on
-  Windows and retested in a NEW game at RC and a Science base.
+* **The mod works in game** (player-tested): the probe and the research item
+  appear at the Science base. `vProbe = 1` is still on for diagnostics — set it
+  to `0` before releasing.
+* `'SB'` is now confirmed from the engine's own tables, and the bogus
+  `|| 'CB'` (the Dominion) is gone from `onDialogBegin`. `docs/STATIONS.md` has
+  the full 14-row type table.
+* The lifecycle bug is fixed twice over: `SbGroup` binds the player
+  (`countMin/countMax = 1`, `addPlayer = true`) and the script is started from
+  `CFG/Main.txt` (`BV/OnStart` + guarded `BV/OnLoad`), so a save load re-attaches
+  it. Iteration needs **one** new game, then rebuild → load the same save:
+  `docs/FAST_ITERATION.md`.
+* `mods/FastGalaxy` (45 stars instead of 73) is the answer to the
+  «Проходит время» request: the 300 warmup turns are a hardcoded constant no mod
+  can reach, but fewer stars makes each of them cheaper. Config-only mod,
+  builds headlessly, opt-in, affects new games only.
+* Both mods pass `srmod lint` and the `Main.txt` replay with zero findings
+  (Linux, headless). The current revision has **not** been through `rsmc.exe` or
+  the game yet — see the pending list in `docs/VERIFICATION.md`.

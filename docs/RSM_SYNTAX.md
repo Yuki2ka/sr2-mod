@@ -73,17 +73,73 @@ Enum samples straight from rsmc (full lists in `data/rsm-dsl.json`):
 ## The four hooks
 
 ```js
-export function onInit() {        // script start, new game
+export function onInit() {        // an instance was created (new game, BV/OnLoad, GRun)
   //;                            // empty body needs at least a comment statement
 }
-export function onTurn() {}       // every game turn, while the script runs
+export function onTurn() {}       // every game turn, while the instance is alive
 export function onDialogBegin() {}// game builds a station/planet/ship dialog
-export function onGlobal() {      // every turn, regardless of script state
-    if (!GCntRun(GScriptName)) {
-        GRun();                  // start this script once per playthrough
+export function onGlobal() {      // fallback self-start, see below
+    GRun();
+}
+```
+
+`onGlobal` is **not** "every turn regardless of state": the engine's
+`RunGlobalScriptsForContext` (`$64DEB8`) evaluates `ConditionCode` only for
+templates **without** an active instance, at a fixed set of moments (planet,
+government and ruins-talk screens; hangar; jump; the main form; arcade battle;
+and once at the end of new-game generation, `Stage := 19`). `GRun()` itself
+(`SF_GRun`, `$605480`) only sets `ScriptTemplateStartRequested`, so calling it
+unguarded is harmless — it asks for an instance that already exists to be left
+alone.
+
+Do **not** guard it with `GCntRun(GScriptName)`: that reads the template's
+`UseCount`, which survives instance deletion *and is stored in the save*, so the
+guard fires once and then blocks every restart for the rest of the campaign.
+That was this mod's original bug (see `docs/STATIONS.md`).
+
+### Start the script from `CFG/Main.txt` instead (recommended)
+
+`onGlobal` can only ever be a fallback. The reliable way — and the reason a
+rebuild does not need a new game — is the engine's own `BV` hooks, executed as
+script text from the merged `Main.dat`:
+
+```
+BV ^{
+    OnStart ^{
+        0DayScripts ^{
+            Handler1=ScriptRun(ShipStar(Player()), GetShipPlanet(Player()), 'MyScript');
+        }
+    }
+    OnLoad ^{
+        Runtime ^{
+            Handler1=if(!IsScriptActive('MyScript')) ScriptRun(ShipStar(Player()), GetShipPlanet(Player()), 'MyScript');
+        }
     }
 }
 ```
+
+(`^` marks a *sorted* block in the DAT text form — the same thing `srmod new`
+writes; `~` is unsorted. The parameter names inside a handler are irrelevant:
+`ConcatenateValues` drops them and joins the values.)
+
+* `RunConfigOnStartHandlers` runs `BV/OnStart` once, at generation `Stage := 16`
+  — before the 300 warmup turns, and after the player and the starting stations
+  exist.
+* `RunConfigOnLoadHandlers` runs `BV/OnLoad` on **every save load**, after the
+  galaxy and the scripts are restored, so the mod re-attaches itself to a save
+  made before it existed.
+* `ScriptRun` takes the template **name** from `Data/Script` (not
+  `Script.<Name>`), matches a running instance by `ScriptFileName` first, and
+  otherwise creates one unconditionally — hence the `IsScriptActive` guard.
+* Each hook holds one or more **handler blocks** (`0DayScripts ^{ … }` above),
+  and the engine executes every handler's concatenated values as one script;
+  never put a param named `BV`
+  inside `BV` (it would overwrite the game version `BV.BV = 2.1.2500`), and
+  never put `//` inside a value (values are truncated there, silently).
+
+`tools/compile.py --stage lint` parses `src/CFG/Main.txt` and prints what each
+hook will execute, checking all of the above. Full chain, with addresses:
+[`docs/FAST_ITERATION.md`](FAST_ITERATION.md).
 
 ### Keep a dialog-injection script alive
 

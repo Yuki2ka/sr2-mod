@@ -388,3 +388,252 @@ sandbox has no Windows `rsmc.exe` or game. Rebuild and deploy the current
 revision on Windows, start a **new** game, confirm the probe at RC, travel to a
 Science base and confirm the probe and research option there, then undock/redock
 to verify they recur. See `docs/VERIFICATION.md`.
+
+
+================================================================================
+## ADDENDUM (fourth pass) — iteration without a new game, and «Проходит время»
+
+Player report that started this pass: the mod works ("i tested and it works"),
+but starting a new game for every change is unacceptable, and the new-game phase
+«Проходит время» is slow — the player knows mods that make it *longer* to start
+a game several years later, so a knob must exist.
+
+Both questions were answered from the reverse-engineered engine
+([`pakompom/SpaceRangersHD_decomp`](https://github.com/pakompom/SpaceRangersHD_decomp),
+SRHD 2.1.2500). Long form with every citation: **docs/FAST_ITERATION.md**.
+
+### Q1. Can the mod change without a new game? — YES
+
+The claim repeated in earlier notes ("mods require a new game") is **wrong** and
+has been removed from the docs. What actually happens on a save load
+(`aSaveLoad.pas LoadGameFromSaveBuffer` → `TGalaxy.LoadFromBuffer`):
+
+1. Saved script templates are matched **by name**; a template that is gone only
+   logs `Warning: Script not found - <Name>` and the instance is skipped.
+2. Shared script variables are restored **by name** (`GetVarNE`); an unknown
+   saved variable is a warning, not an error.
+3. Each saved instance calls `TScript.LoadState` (`$657690`), whose **first
+   statement is `LoadFromFile(ScriptFileName)`** (`$656D1C`) — the `.scr` is
+   re-read from disk on every load, and `LoadFromFile` evicts its `GlobalCache`
+   entry in a `finally`, so no stale copy survives. `TScript.SaveState`
+   (`$656E90`) states it plainly: compiled instructions are not saved.
+4. Stars/planets/items/ships are rebound **by name** (`GetStar` raises if the
+   star is gone — this is the one way to break an existing save).
+5. `Galaxy.RunConfigOnLoadHandlers` (`aGalaxy.pas $7A3A2C`, called from
+   `aSaveLoad.pas:270` and `:590`) executes every sub-block of
+   `MainDataConfig.BV/OnLoad` as script text (`ConcatenateValues`, `$8499BC`).
+
+Config reload without restarting the exe: `Rangers.dpr:690-745` re-runs
+`LoadDatConfigAndModOverrides` (`GR_Main.pas $4CC738`) plus runtime re-init,
+ship-state refresh and import rebinding whenever `ReloadScriptTemplates or
+ReloadModsRequested`; «Применить» in the mod manager (`fMods.pas:884
+ApplyClick`) writes `Mods\ModCFG.txt` and raises that flag. A save whose mod set
+differs is **not** rejected — `aGalaxy.pas:1400-1410` only logs
+`Warning! Mod sets mismatch:`.
+
+So the loop is: edit `src/` → `tools\run_compile.cmd` → (Mods → «Применить» only
+for config changes) → **load the same save**. One new game, ever, per campaign.
+
+Fix applied: `mods/SbHello/src/CFG/Main.txt` now carries the hooks that make
+this work for a save that predates the mod —
+
+```
+BV ^{
+    OnStart ^{
+        0DayScripts ^{
+            SbHello=ScriptRun(ShipStar(Player()), GetShipPlanet(Player()), 'SbHello');
+        }
+    }
+    OnLoad ^{
+        Runtime ^{
+            01=if(!IsScriptActive('SbHello')) ScriptRun(ShipStar(Player()), GetShipPlanet(Player()), 'SbHello');
+        }
+    }
+}
+```
+
+(the DAT text form: `^` = sorted block, as `srmod new` writes it; the parameter
+names inside a handler do not matter, `ConcatenateValues` drops them and joins
+the values)
+
+`OnStart` fires at generation `Stage := 16` (see Q2), `OnLoad` on every save
+load. The guard is mandatory: `SF_ScriptRun` (`$61EB20`) matches
+`ScriptFileName` first and otherwise creates an instance unconditionally
+(`TryStartScriptInstanceFromTemplate`, `aScript.pas:1112`), so an unguarded
+`OnLoad` would start a second instance per load. The old `onGlobal`/`GRun()`
+path is kept only as a fallback, and its `GCntRun` guard is gone (third-pass
+finding: `UseCount` is saved, so the guard blocked restarts forever).
+`SF_GRun` (`$605480`) merely sets `ScriptTemplateStartRequested`, so an
+unguarded `GRun()` is safe.
+
+Related gotcha now documented: **variable values are part of the save**, so
+`vProbe`'s initial value in `vars.rsm` applies to new games only; on a loaded
+save the stored value wins. `code.rsm` gained `vStartTurn = CurTurn()` in
+`onInit` and prints it in the probe (`type=<0> start=<1> now=<2>`), which turns
+the whole question into a one-dock experiment: `start=0 now=301` = new game via
+`BV/OnStart`; `start=0 now=<save turn>` = instance restored from the save, no
+new game needed; `start=<turn> now=<turn>` = `BV/OnLoad` created the instance.
+(301 and not 300: `Galaxy.CurrentTurn` starts at 0 — `aGalaxy.pas:1028` — every
+`Galaxy.NextDay` increments it — `:2340` — and `Stage := 17` runs one
+`CalculateGalaxyTurnAndWait` before the 300-iteration warmup loop.)
+
+### Q2. Can a mod skip «Проходит время»? — NO, but it can shrink it
+
+Identity of the phase, pinned down structurally (the Russian label appears
+nowhere in the code): `TThreadCreateNewGame.Execute` (`screens/fGameSettings.pas`)
+runs
+
+```pascal
+Stage := 16;
+Galaxy.RunConfigOnStartHandlers;      // BV/OnStart — mods get control here
+NewGameGenerationStage := 6;          // the label «Проходит время» (fIntroduction.pas:208)
+Stage := 17;
+CalculateGalaxyTurnAndWait;
+for I := 1 to GalaxyWarmupTurns do    // GalaxyWarmupTurns = 300, aGalaxyStruct.pas:7
+begin
+  if I mod 20 = 0 then SysUtils.Sleep(1);
+  CalculatePlayerStarTurnAndWait;
+  CalculateGalaxyTurnAndWait;
+end;
+Stage := 18;  // dock at the RC, starting skills and equipment
+Stage := 19;  // ApplyCharacterPreset, RunGlobalScriptsForContext(star, 0), stage := 8
+```
+
+`Stage` (0..19) is internal and appears in the crash log
+(`Galaxy create exception, label = <Stage> seed = <seed>`);
+`NewGameGenerationStage` (0..8) drives the intro screen. 300 turns at
+`TurnsPerYear = 365` is ~300 days of simulated history, and the calendar is
+defined around it: `TGalaxy.TurnToDateTime(Turn) = Turn + 511341.5 -
+GalaxyWarmupTurns`, with gameplay gates comparing against the same constant
+(`Achievements.pas:427`, `aGalaxy.pas:2301/2453/5414`). Independent
+corroboration that this is the phase mods hang on: XenoModKit's README and
+`SCRIPTING_GUIDE_RU.md` both describe «зависание на "Проходит время"».
+
+Every door checked, all closed:
+
+- The bound is an immediate constant; no `Main.dat` / `Lang.dat` /
+  `CacheData.dat` / `newgame.txt` key reads a warmup or history length
+  (`newgame.txt` CustomRules has `KlingStrength/KlingAggro/KlingSpawn/
+  PirateAggro/CoalAggro` … and no turn count).
+- `Galaxy.StasisModEnabled` is the one flag that makes warmup turns nearly free
+  — `TThreadCalc.Execute` (`ThreadCalc.pas $7E4BC4`) wraps the whole
+  `Galaxy.NextDay` block in `if Galaxy.StasisModEnabled <> 1`. It is written in
+  exactly three places: init to 0 (`aGalaxy.pas:871`), save load
+  (`:1771/:1778`), and the **`ZAWARUDO` cheat** (`CheatCode.pas:1509`). It is
+  saved with the galaxy and clears the "clean game" flag (`aGalaxy.pas:4287`),
+  i.e. a cheat, not a knob.
+- No script function can set it: all 755 `Scope.Add` registrations were scanned;
+  the only galaxy field any function writes is `CurrentTurn`
+  (`SF_CurTurn`, `$608800`: `if High(av) > 0 then Galaxy.CurrentTurn := av[1].GetInt`).
+  `GalaxyPtr('StarCnt')` yields an address but nothing writes through it.
+- `ExitScreenLoop` is the window-close path: `Exit` inside the loop skips
+  `Stage := 18/19` (docking, starting equipment, `ApplyCharacterPreset`,
+  `RunGlobalScriptsForContext`) and never sets `NewGameGenerationStage := 8`, so
+  the intro screen would hang forever.
+- `ForceNextDay()` only sets `ScriptEndTurnRequested`, dispatched by the UI
+  (`TryDispatchScriptEndTurn`) — meaningless during generation.
+- `loadlibrary`/`libraryfunction` could in principle patch the constant, but
+  Delphi evaluates a `for` bound once at loop entry, so it would have to land
+  before `Stage := 17`; shipping a version-specific memory patch is not modding.
+
+What *is* moddable is the cost of each of those 300 days. `TGalaxy.NextDay`
+(`aGalaxy.pas:2310-2360`) loops `Star.NextDay(False)` over every star, runs
+script Turn/Global code, then stations, constellation stats, prices, ranger
+quotas and `RefreshTechLevel` — so fewer stars means cheaper turns, and the mod's
+own `onTurn`/`onGlobal` run 300 times there (keep them O(1); a heavy per-turn
+script is exactly what hangs this phase for other mods).
+
+The lever: `aConst.pas:1491 InitializeGameplayConfig` — called from
+`InitializeGlobalUiRuntime` (`Globals.pas:675`, ~`:1194`) **after**
+`LoadDatConfigAndModOverrides` — reads `Constellations.GalaxyCountStars` (**73**),
+`GalaxySizeY` (**100**) and `GalaxySizeX` (**145**) from `LanguageDataConfig`,
+i.e. from the merged `CFG\Rus\Lang.dat`. Merge semantics
+(`TBlockParEC.MergeFrom`, `EC_BlockPar.pas:1299-1359`): same-name **blocks**
+merge recursively, same-name **params** are deleted then re-added — the mod wins
+without destroying its neighbours. Community precedent for the very same key:
+`RefABitMoreStars`/`5`/`10` (+10/15/20 star systems) and `FairanGalaxy`
+(+11 star types, +70 background systems), all Lang-only mods.
+
+So `mods/FastGalaxy` was created: script-less (`"script": {"engine": "none"}`,
+supported by `srmod/build.py:737`; `srmod new` cannot scaffold one), one
+override `Constellations { GalaxyCountStars = 45 }`, heavily commented, opt-in,
+new games only. Expected: ~38 % fewer stars ⇒ roughly 2-3× faster generation
+(estimate, not measured) and a smaller galaxy to fly in afterwards.
+`GalaxySizeX/Y` stay vanilla, so map geometry is untouched. Known risk:
+`ConstellationCount := 20` is hardcoded (`aGalaxy.pas:821`) and
+`GenerateGalaxyLayout` (`:6207-6249`) divides the map into 20 polygons, so a too
+low star count yields sparse constellations — raise to 55/60 or disable the mod
+if the galaxy looks wrong; a generation failure logs
+`Galaxy create exception, label = <Stage> seed = <seed>`.
+
+Honest framing for the player's premise: mods that "make this phase longer to
+start the game years later" cannot be changing the turn count — the constant is
+not data. Either they make each turn more expensive (more stars/stations/ships),
+or they move the calendar with `CurTurn(N)` from a `BV/OnStart` handler, which
+changes the displayed date and every `CurrentTurn` gate without simulating
+anything. SbHello deliberately does not do the latter: it desynchronises the
+date from the real state of the galaxy.
+
+### Bonus: open question 3 from the first addendum is resolved
+
+`'CB'` is **not** a Science-base variant. `GetTypeNameKey` is
+`ShipTypeNames[TypeId].Name` (`aShip.pas:2197`), `ShipTypeNames` is
+`array[TShipType]` (`aConst.pas:381`) and `TShipType` is enumerated at
+`aGalaxyStruct.pas:75-90`, so lining them up gives the exhaustive table:
+0 `Kling`, 1 `Ranger`, 2 `Transport`, 3 `Pirate`, 4 `Warrior`,
+5 `Tranclucator`, 6 `RC`, 7 `PB`, 8 `WB`, 9 **`SB` = `rstScienceBase`**,
+10 `BK` = business centre, 11 `MC` = medical base, 12 **`CB` = `rstDominion`**,
+13 `UB` = custom station. The corpus line that motivated `|| 'CB'` is a mod
+serving two station kinds on purpose, not evidence about `SB`. `onDialogBegin`
+now tests `vStationType == 'SB'` only; docs/STATIONS.md carries the table.
+Corpus tokens like `'TC'`, `'AS'`, `'MB_licensed'` are not in the table at all —
+mods may set type names at runtime, so any string can appear.
+
+Also useful for testing, from the same routine: generation stage 14 creates the
+ranger centre, the **science base** and the medical base **in the player's
+starting system** (pirate base at `StarDistances[3]`, business centre at `[1]`,
+military base at `[2]`) — the Science-base dialog needs no flying.
+
+### Tooling changes in this pass
+
+- `tools/compile.py`: preflight step **4b `check_main_dat`** parses
+  `src/CFG/Main.txt` with sr-modkit's vendored `srblockpar` and catches the four
+  ways a `BV` hook silently fails — `//` inside a value (checked on the **raw**
+  text, because both parsers strip it before the tree exists), a param named
+  `BV` (clobbers `BV.BV = 2.1.2500`, `GR_Main.pas:2983`), an empty or
+  block-less handler, `ScriptRun('<name>')` not registered in `Data/Script`, and
+  an unguarded `ScriptRun` in `OnLoad` — and prints the concatenated text of
+  every hook, exactly what the engine will execute. `check_script_name` now
+  skips config-only mods instead of failing them.
+- `tools/run_compile.py`: `MOD_DIRS` replaces `MOD_DIR`; the front-end builds
+  every listed mod, survives a failure in one (`compile.py`'s `die()` raises
+  `SystemExit`), pauses only after the last, and returns the worst exit code.
+
+### Verified here, headlessly (Linux, no game, no rsmc)
+
+- `Main.txt` round-trips: `read_text` → `text_to_dat` → `read_dat` is identical.
+- `ConcatenateValues` replay yields exactly the two `ScriptRun(...)` texts above.
+- A simulated `MergeFrom` into a fake vanilla tree (`BV.BV = 2.1.2500` + the
+  game's `10_Game` handlers) keeps the version and the vanilla handlers and
+  appends ours.
+- `mods/FastGalaxy` builds (`srmod build`, engine `none`) to
+  `build/{CFG/Rus/Lang.dat, ModuleInfo.txt}`; read back it gives
+  `GalaxyCountStars = 45`, and a simulated merge with the game's `Constellations`
+  block keeps `GalaxySizeX/GalaxySizeY/Name1` while overriding 73 → 45. The
+  Linux-built `build/` was deleted afterwards (never committed).
+- Both mods: `srmod lint` → "OK: замечаний нет", and the four `check_main_dat`
+  traps all fire on a crafted bad `Main.txt` while the real mods stay clean.
+
+### Still open (one Windows run + one playthrough)
+
+1. `rsmc.exe` has still never run on the current revision (`CFG/Main.txt`,
+   `vStartTurn`, the `'CB'` removal, `mods/FastGalaxy`).
+2. The `start=/now=` probe experiment (§Q1) — the direct in-game proof that a
+   rebuild + save load is enough.
+3. Whether «Применить» alone suffices after a `Main.txt`/`Lang.txt` change.
+4. `FastGalaxy`: real generation time, and whether 45 stars give a sane galaxy.
+5. `SUDO` (`CheatSudo`, `CheatCode.pas:1706`) as a way to flip `vProbe` in a
+   loaded save: mechanism read from source, keystrokes and text form unconfirmed.
+
+`tools\run_compile.cmd` closes 1; the rest is one playthrough. See
+docs/FAST_ITERATION.md and docs/VERIFICATION.md.

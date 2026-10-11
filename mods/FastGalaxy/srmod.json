@@ -1,0 +1,16 @@
+{
+  "name": "FastGalaxy",
+  "install": "Mods/FastGalaxy",
+  "languages": [
+    "Rus"
+  ],
+  "primary_lang": "Rus",
+  "script": {
+    "engine": "none"
+  },
+  "media": {
+    "gi_format": "argb",
+    "gai_format": "delta"
+  },
+  "packages": []
+}

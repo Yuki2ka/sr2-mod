@@ -14,14 +14,27 @@ own default / environment variable (see docs/WORKFLOW.md).
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
 # ============================== SETTINGS ====================================
 # Paths are Windows paths. Use a raw string (r"...") so backslashes stay put.
 
-# Which mod to build. Leave empty for mods/SbHello next to this repo.
-MOD_DIR = r""
+# Which mods to build, in order — each entry is a mod project folder (the one
+# holding srmod.json). An empty entry means the repo default (mods/SbHello).
+# Relative paths are resolved against the REPO ROOT, so they work no matter
+# which folder this script was launched from. A plain string is accepted too.
+#
+#   mods/SbHello     the test mod: script + BV/OnStart + BV/OnLoad, so a
+#                    rebuilt .scr is picked up by an existing save.
+#   mods/FastGalaxy  config-only (no script): fewer stars, so a NEW game
+#                    generates faster. Does not touch existing saves; comment
+#                    the line out when you want a normal-size galaxy.
+MOD_DIRS = [
+    r"",                    # = mods/SbHello
+    r"mods\FastGalaxy",
+]
 
 # sr-modkit clone: the folder that contains srmod\ (and its own README.md).
 SRMOD_ROOT = r"C:\Games\sr-modkit"
@@ -89,38 +102,72 @@ def load_compile():
     return mod
 
 
+def resolve_mod_dir(entry: str, repo_root: Path) -> str:
+    """Absolute mod folder for compile.py; '' keeps compile.py's own default."""
+    if not entry or not entry.strip():
+        return ""
+    # SETTINGS are written with Windows separators; keep them working when the
+    # repo is checked out somewhere else (lint stage runs on any OS).
+    if os.sep != "\\":
+        entry = entry.replace("\\", "/")
+    path = Path(entry)
+    return str(path if path.is_absolute() else repo_root / path)
+
+
 def main() -> int:
     compile_mod = load_compile()
+    repo_root = Path(__file__).resolve().parent.parent
 
-    argv = ["--stage", STAGE, "--deploy-mode", DEPLOY_MODE]
-    if MOD_DIR:
-        argv += ["--mod-dir", MOD_DIR]
-    if SRMOD_ROOT:
-        argv += ["--srmod-root", SRMOD_ROOT]
-    if PYTHON_EXE:
-        argv += ["--python", PYTHON_EXE]
-    if RSMC:
-        argv += ["--rsmc", RSMC]
-    if GAME_DIR:
-        argv += ["--game", GAME_DIR]
-    if DECOMPILER:
-        argv += ["--decompiler", DECOMPILER]
-    if MODKIT_ROOT:
-        argv += ["--modkit-root", MODKIT_ROOT]
-    if OVERWRITE_COPY:
-        argv += ["--overwrite"]
-    if CLEAN_BUILD:
-        argv += ["--clean"]
-    if DO_AUDIT:
-        argv += ["--audit"]
-    if AUDIT_JSON:
-        argv += ["--audit-json"]
-    if FIX_ENCODINGS:
-        argv += ["--fix-encodings"]
-    if PAUSE_AT_END:
-        argv += ["--pause"]
+    entries = MOD_DIRS if isinstance(MOD_DIRS, (list, tuple)) else [MOD_DIRS]
+    targets = [resolve_mod_dir(e, repo_root) for e in entries]
 
-    return compile_mod.main(argv)
+    worst = 0
+    for index, target in enumerate(targets):
+        argv = ["--stage", STAGE, "--deploy-mode", DEPLOY_MODE]
+        if target:
+            argv += ["--mod-dir", target]
+        # Only the last mod keeps the window open; compile.py's own --pause
+        # would otherwise stop after every single one.
+        if PAUSE_AT_END and index == len(targets) - 1:
+            argv += ["--pause"]
+        if SRMOD_ROOT:
+            argv += ["--srmod-root", SRMOD_ROOT]
+        if PYTHON_EXE:
+            argv += ["--python", PYTHON_EXE]
+        if RSMC:
+            argv += ["--rsmc", RSMC]
+        if GAME_DIR:
+            argv += ["--game", GAME_DIR]
+        if DECOMPILER:
+            argv += ["--decompiler", DECOMPILER]
+        if MODKIT_ROOT:
+            argv += ["--modkit-root", MODKIT_ROOT]
+        if OVERWRITE_COPY:
+            argv += ["--overwrite"]
+        if CLEAN_BUILD:
+            argv += ["--clean"]
+        if DO_AUDIT:
+            argv += ["--audit"]
+        if AUDIT_JSON:
+            argv += ["--audit-json"]
+        if FIX_ENCODINGS:
+            argv += ["--fix-encodings"]
+
+        # compile.py signals a hard stop with die() -> sys.exit(); one broken
+        # mod must not hide the state of the next one.
+        try:
+            rc = compile_mod.main(argv)
+        except SystemExit as e:
+            rc = int(e.code or 0)
+        if rc:
+            print(f"\n[run_compile] {Path(target).name if target else 'SbHello'}: "
+                  f"exit code {rc}", file=sys.stderr)
+            worst = worst or rc
+
+    if len(targets) > 1:
+        print(f"\n[run_compile] {len(targets)} mod(s) processed, "
+              f"exit code {worst}")
+    return worst
 
 
 if __name__ == "__main__":

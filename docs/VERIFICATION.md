@@ -1,10 +1,20 @@
 # What is actually verified
 
-Honest split between "proved by tooling/source review" and "needs the game".
-Updated after the third pass: the reported one-time probe was traced to the
-script instance having no bound ships (see the final addendum in
-`investigation.txt`). The source fix is in, but its Windows rebuild and in-game
-retest are still pending.
+Honest split between "proved by tooling/source review", "proved in the game" and
+"still needs the game". Updated after the fourth pass (fast iteration + the
+«Проходит время» phase): see `docs/FAST_ITERATION.md` and ADDENDUM 4 in
+`investigation.txt`.
+
+## Verified in the game (player's own machine)
+
+| Claim | Evidence |
+|---|---|
+| The mod reaches the Science base dialog and the injected item works | player report: «i tested and it works» — after the `SbGroup` player-binding fix (`countMin = countMax = 1`, `addPlayer = true`) and the removal of the `GCntRun` guard, the probe and **«Спросить о текущих исследованиях»** appear at the science base |
+| The headless build pipeline produces a mod the game accepts | `tools\run_compile.cmd` on Windows: `SbHello.scr` + `Lang.dat`, `Main.dat`, `CacheData.dat`, junction-deployed into `<game>\Mods\SbHello`, loaded by the game |
+
+The current source revision (`CFG/Main.txt` BV hooks, `vStartTurn`, the
+`'CB'` removal, `mods/FastGalaxy`) has **not** been compiled with `rsmc.exe` or
+played yet — that is item 5 below.
 
 ## Verified by running the tools (nothing below is a guess)
 
@@ -14,64 +24,87 @@ Rows marked *Linux* were proved in the headless sandbox that had no game and no
 
 | Claim | How it was proved |
 |---|---|
-| Latest `srmod lint` passes on `mods/SbHello` with **zero** findings *(Linux)* | `tools/compile.py --stage lint --srmod-root <sr-modkit-root>` after the player-binding fix (DSL check against `data/rsm-dsl.json`, extracted from `rsmc.exe`) |
-| All `.rsm` are valid UTF-8 without BOM *(Linux)* | `srmod.build.assert_rsm_is_utf8` over every module |
-| All `src/**/*.txt` are UTF-16LE+BOM *(Linux)* | `srmod.build.assert_not_utf8_datnik` over every file (the gate that fails the build on UTF-8 Cyrillic) |
-| `scriptName("SbHello")` == `srmod.json:name` == entry path *(Linux)* | `tools/compile.py` preflight |
-| `tools/compile.py --fix-encodings` repairs broken encodings *(Linux)* | round-trip test on a deliberately broken copy: detected 3 problems, fixed all 3, lint clean again |
-| `ShipType(...) == 'SB'` is the Science base *(Linux)* | two sources: a real line of code in sr-modkit's corpus-built `data/lexicon.json`, and `t_SB` in `rsmc`'s own constant list (see `docs/STATIONS.md`) |
-| `AddDialogInject` argument order and meaning *(Linux)* | `data/lexicon.json` (function manual + corpus) **and** XenoModKit issue #17, which quotes the engine sources: arg 1 is a *jump target*, not the injection target |
-| Only `rsmc.exe` is required; DAT/Lang/CacheData need no foreign tool *(Linux read)* | `srmod/build.py` — `run_blockpar` uses `srmod/vendor/srblockpar`; media encoding is the only part that wants `rson-decompiler`, and this mod ships no media |
-| `srmod build` finishes green on Windows, with `rsmc.exe` doing the compile *(previous source revision)* | `tools/run_compile.py` on Windows: `SbHello.scr` (2860 bytes) plus `Lang.dat`, `Main.dat`, `CacheData.dat`, exit 0; the player-binding lifecycle fix has not been built yet |
-| Junction deployment works *(Windows, previous source revision)* | `srmod deploy` exit 0 **and** every file readable through the link: `ModuleInfo.txt`, `CFG\Main.dat`, `CFG\Rus\Lang.dat`, `CFG\CacheData.dat`, `DATA\Script\SbHello.scr`. Caveat found on the way: an earlier link was **dangling** (target `C:\CY\=\sr2-mod\...\build` never existed) while deploy still exited 0, so the game saw nothing — `compile.py` now clears a stale entry and verifies the new link resolves |
-| `rsmc` is a Windows-only binary *(Linux read)* | it is a Win32 `.exe`, and the build stage refuses to run it on `os.name != 'nt'` instead of crashing confusingly |
+| Latest `srmod lint` passes on `mods/SbHello` **and** `mods/FastGalaxy` with zero findings *(Linux)* | `tools/compile.py --stage lint` per mod, and one `tools/run_compile.py` run over both (DSL check against `data/rsm-dsl.json`, extracted from `rsmc.exe`) |
+| All `.rsm` are valid UTF-8 without BOM; all `src/**/*.txt` are UTF-16LE+BOM *(Linux)* | `srmod.build.assert_rsm_is_utf8` / `assert_not_utf8_datnik` over every module |
+| `scriptName("SbHello")` == `srmod.json:name` == entry path *(Linux)* | `tools/compile.py` preflight — and for a config-only mod (`"script": {"engine": "none"}`) preflight now says the name check is skipped instead of failing |
+| `src/CFG/Main.txt` is a valid DAT source and survives the build *(Linux)* | `srblockpar.read_text` → `text_to_dat` → `read_dat`: byte-identical tree |
+| The `BV/OnStart` and `BV/OnLoad` hooks execute the intended code *(Linux)* | preflight step 4b replays the engine's `ConcatenateValues` (`$8499BC`) per handler and prints the resulting text |
+| The mod's `Main.dat` merges into the game's without clobbering it *(Linux)* | simulated `TBlockParEC.MergeFrom` against a fake vanilla tree: `BV.BV = 2.1.2500` and the game's `10_Game` handlers survive, ours are appended (semantics read from `EC_BlockPar.pas:1299-1359`) |
+| `mods/FastGalaxy` builds and its `Lang.dat` overrides one value only *(Linux)* | `tools/compile.py --stage build --mod-dir mods/FastGalaxy` → `build/{CFG/Rus/Lang.dat, ModuleInfo.txt}`; read back: `GalaxyCountStars = 45`; simulated merge keeps `GalaxySizeX/GalaxySizeY/Name1` and changes 73 → 45. Preflight skips the `rsmc.exe` requirement for a script-less mod, so this one builds on **any** OS |
+| The four `Main.txt` traps are actually caught *(Linux)* | negative test: a crafted `Main.txt` with `//` in a value, a `BV` param, a `ScriptRun('Wrong')` name and an unguarded `OnLoad` fires all four; the real mods stay clean |
+| `ShipType(...) == 'SB'` is the Science base — and `'CB'` is **not** a science-base variant *(Linux read)* | the engine's own tables: `TShipType` (`aGalaxyStruct.pas:75-90`) lined up with `ShipTypeNames` (`aConst.pas:381`) via `GetTypeNameKey` (`aShip.pas:2197`) → `SB` = `rstScienceBase`, `CB` = `rstDominion`. See `docs/STATIONS.md` |
+| «Проходит время» = 300 warmup turns and is not moddable *(Linux read)* | `GalaxyWarmupTurns = 300` (`aGalaxyStruct.pas:7`) used directly by the loop in `TThreadCreateNewGame.Execute` (`screens/fGameSettings.pas`), `NewGameGenerationStage := 6` around it, `TurnToDateTime` subtracting it, and no config key reading it |
+| The star count *is* moddable through `Lang.dat` *(Linux read)* | `aConst.pas:1491 InitializeGameplayConfig` reads `Constellations.GalaxyCountStars/GalaxySizeX/GalaxySizeY` from `LanguageDataConfig`, which `LoadDatConfigAndModOverrides` fills with the mod's `CFG\Rus\Lang.dat` |
+| Only `rsmc.exe` is required; DAT/Lang/CacheData need no foreign tool *(Linux read)* | `srmod/build.py` — `run_blockpar` uses `srmod/vendor/srblockpar`; media encoding is the only part that wants `rson-decompiler` |
+| `rsmc` is a Windows-only binary *(Linux read)* | Win32 `.exe`; the build stage refuses to run it on `os.name != 'nt'` |
+| Junction deployment works *(Windows, earlier revision)* | `srmod deploy` exit 0 **and** every file readable through the link. Caveat found on the way: an earlier link was **dangling** (target never existed) while deploy still exited 0 — `compile.py` now clears a stale entry and verifies the new link resolves |
 
-## Verified earlier by reading tool sources (not executed)
+## Verified by reading engine source (not executed)
 
-* `rsmc build <entry.rsm> -o <out.scr> [--lang-txt F] [--lang-dat F]` — CLI shape
-  from the RScript README and from `srmod.build.run_rsmc`, which builds exactly
-  that argv.
-* `srmod build` step order and its gates (`docs/STAGE0.md` + `build.py`).
-* Language table: rsmc writes `Script/<ScriptName>/<n>` into the staged
-  `Lang.txt`, which then becomes `CFG/<lang>/Lang.dat`.
-* XenoModKit's runtime advice: prefer `restart` over `fastexit` for
-  station/planet dialogs (`dialog-fastexit-on-station`).
+These are the claims `docs/FAST_ITERATION.md` rests on. Every one names the
+routine, so it can be re-checked in
+[`pakompom/SpaceRangersHD_decomp`](https://github.com/pakompom/SpaceRangersHD_decomp).
 
-## Lifecycle finding from reverse-engineered engine source (not a game run)
-
-The user reported that the probe appeared at the first station, then not after
-undocking and docking again. Inspection of
-[`pakompom/SpaceRangersHD_decomp`](https://github.com/pakompom/SpaceRangersHD_decomp)
-explains it:
-
-* `source/screens/fRuinsTalk.pas` invokes `RunDialogCode` for each active script
-  while building the station menu, so an active script can re-inject on later
-  visits.
-* `source/game/aGalaxy.pas` removes a script at end-of-turn when
-  `Script.Ships.Count < 1`.
-* `source/script/aScript.pas` binds a group member to the player only when the
-  group has `addPlayer`/`IncludePlayer`; the `ship(player: true, ...)` template
-  requirement alone does not add a bound ship. A count of one with
-  `addPlayer: true` is the player alone, not an extra NPC.
-* `GCntRun` records starts even after the active instance is deleted. Therefore
-  the old `if (!GCntRun(GScriptName)) GRun();` guard prevented a second start.
-
-`world.rsm` now binds the player as the sole `SbGroup` member (`countMin = 1`,
-`countMax = 1`, `addPlayer = true`). This is source-reviewed but not yet rebuilt
-with the user's Windows `rsmc.exe` or verified in the game.
+* **A save load re-reads the `.scr` from disk.** `TScript.LoadState` (`$657690`)
+  starts with `LoadFromFile` (`$656D1C`), which evicts its cache entry in a
+  `finally`; `TScript.SaveState` (`$656E90`) excludes compiled instructions.
+* **Templates, variables, stars, planets, items and groups are restored by
+  name**; a missing template is a warning (`Warning: Script not found - X`), an
+  unknown variable is a warning, a missing star raises.
+* **`BV/OnLoad` runs on every save load** (`RunConfigOnLoadHandlers`,
+  `aGalaxy.pas $7A3A2C`, called from `aSaveLoad.pas:270` and `:590`), and
+  **`BV/OnStart` runs at generation `Stage := 16`** — before the warmup loop
+  (`Stage := 17`).
+* **`ScriptRun` needs an `IsScriptActive` guard**: `SF_ScriptRun` (`$61EB20`)
+  matches `ScriptFileName` first, then falls back to the template name, and
+  `TryStartScriptInstanceFromTemplate` (`aScript.pas:1112`) creates
+  unconditionally.
+* **In-process mod reload without restarting the exe**: `Rangers.dpr:690-745`
+  re-runs `LoadDatConfigAndModOverrides` + runtime re-init when
+  `ReloadScriptTemplates or ReloadModsRequested`; «Применить»
+  (`fMods.pas:884 ApplyClick`) writes `Mods\ModCFG.txt` and raises the flag.
+* **A mod-set mismatch on load is only logged** (`aGalaxy.pas:1400-1410`).
+* **No script function can suspend or shorten the simulation.** All 755
+  `Scope.Add` registrations scanned: the only galaxy field written is
+  `CurrentTurn` (`SF_CurTurn`, `$608800`). `StasisModEnabled` — the flag
+  `TThreadCalc.Execute` (`$7E4BC4`) checks before `Galaxy.NextDay` — is written
+  only by init, save load and the `ZAWARUDO` cheat (`CheatCode.pas:1509`).
+* **Your script runs 300 times during generation** (`NextDay` →
+  `Script.RunTurnCode`), which is why a heavy `onTurn` hangs the phase.
+* Lifecycle finding from the third pass (probe appeared once, then never):
+  `fRuinsTalk.pas` runs dialog code per active script; `aGalaxy.pas` deletes a
+  script with no bound ships at end of turn; `GCntRun` counts starts even after
+  deletion, so the old guard blocked the restart.
 
 ## NOT verified — needs the game
 
-1. **That the probe and research item appear again after travel and docking.**
-   The source lifecycle bug is fixed; runtime behavior still needs a rebuild,
-   new game, and repeat-docking test.
-2. Whether `'SB'`/`'CB'` covers every Science-base variant and whether the
-   dialog text/answer flow behaves correctly in-game.
-3. The latest group change has not been compiled/deployed on Windows yet. The
-   earlier Windows build was of the previous source revision.
-4. Save-game compatibility and interaction with other mods.
+1. **The `start=`/`now=` probe experiment** (`docs/FAST_ITERATION.md` §1.5):
+   `start=0 now=301` on a new game (1 galaxy turn before the warmup loop +
+   300 inside it), `start=0 now=<save turn>` after loading a
+   save that already had the instance, `start=<turn> now=<turn>` when
+   `BV/OnLoad` had to create one. This is the direct proof that iteration needs
+   no new game.
+2. **That «Применить» alone is enough** after a `Main.txt`/`Lang.txt` change,
+   without closing the exe.
+3. **`mods/FastGalaxy` in game**: real generation time, and whether 45 stars
+   produce a sane galaxy (constellation count is hardcoded at 20,
+   `aGalaxy.pas:821`). If generation dies, `#####add.log` will say
+   `Galaxy create exception, label = <Stage> seed = <seed>`.
+4. **Writing `vProbe` at runtime** with the `SUDO` cheat (`CheatSudo`,
+   `CheatCode.pas:1706`) — the mechanism is read from source, the keystrokes and
+   the exact text form are not confirmed.
+5. **The current source revision on Windows**: `CFG/Main.txt`, `vars.rsm`
+   (`vStartTurn`), `code.rsm` (`'CB'` removed, probe text), and `FastGalaxy`
+   have never been through `rsmc.exe`/`srmod build` on the player's machine.
+6. Interaction with other mods (star-count mods in particular change the same
+   `Constellations` block — last enabled mod wins).
 
-The previous build/deploy passed on Windows, but this update needs a fresh
-`tools\run_compile.cmd` run. Then enable the mod in a NEW game: the RC probe
-should be followed by another probe at a Science base, and the actual research
-item should appear for station type `SB` or `CB`.
+## Next run on Windows
+
+```bat
+tools\run_compile.cmd        :: builds SbHello and FastGalaxy, deploys both
+```
+
+then, in the game: Mods → enable what you want → **«Применить»** → start **one**
+new game (FastGalaxy only affects new games) → and from then on rebuild +
+**load that save** for every further change.

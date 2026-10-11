@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -181,6 +182,174 @@ def read_json(path: Path) -> dict | None:
 
 
 # --------------------------------------------------------------------- preflight
+def load_srblockpar(args):
+    """sr-modkit's own DAT reader, used for the headless Main.txt replay."""
+    if not args.srmod_root:
+        return None
+    vendor = Path(args.srmod_root).resolve() / "srmod" / "vendor"
+    if not (vendor / "srblockpar" / "__init__.py").is_file():
+        return None
+    if str(vendor) not in sys.path:
+        sys.path.insert(0, str(vendor))
+    try:
+        import srblockpar  # noqa: PLC0415  (vendored, path known only at runtime)
+    except ImportError as e:
+        log("preflight", f"srblockpar unavailable ({e}) — skipping the Main.txt replay")
+        return None
+    return srblockpar
+
+
+def _bp_kinds(srblockpar):
+    bp = getattr(srblockpar, "blockpar", None)
+    if bp is None:
+        import importlib
+        bp = importlib.import_module("srblockpar.blockpar")
+    return bp
+
+
+def _concatenate_values(block, bp) -> str:
+    """Port of TBlockParEC.ConcatenateValues: the text the engine executes."""
+    out = []
+    for e in block.entries:
+        if e.kind == bp.KIND_TEXT:
+            continue
+        if e.kind == bp.KIND_BLOCK:
+            out.append("{" + _concatenate_values(e.block, bp) + "}")
+        else:
+            out.append(e.value or "")
+    return "".join(out)
+
+
+def _child_block(block, name, bp):
+    for e in block.entries:
+        if e.kind == bp.KIND_BLOCK and e.name == name:
+            return e.block
+    return None
+
+
+def _script_run_names(text: str) -> list[str]:
+    """The script names passed to ScriptRun(...) in a chunk of engine code.
+
+    Not a one-regex job: the call contains nested parens
+    (ScriptRun(ShipStar(Player()), GetShipPlanet(Player()), 'Name')), so the
+    arguments are cut at the terminating ';' and the name is the last quoted
+    literal in them — which is where SRHD puts it.
+    """
+    names = []
+    for call in re.findall(r"ScriptRun\s*\(([^;]*)", text):
+        quoted = re.findall(r"'([^']+)'", call)
+        if quoted:
+            names.append(quoted[-1])
+    return names
+
+
+def _comment_in_value(raw_text: str) -> list[str]:
+    """Param lines whose value carries a '//' comment.
+
+    Both the game's DAT parser and srblockpar cut the value at '//', so by the
+    time the tree is parsed the comment — and anything of the statement that
+    followed it — is already gone. That is why this is scanned on the raw text:
+    a truncated line of engine code is silent and only shows up as a script
+    that never starts.
+    """
+    found = []
+    for line in raw_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        if "=" not in stripped:
+            continue
+        value = stripped.split("=", 1)[1]
+        if "//" in value:
+            found.append(stripped.split("=", 1)[0].strip())
+    return found
+
+
+def check_main_dat(mod_dir: Path, args) -> list[str]:
+    """Replay src/CFG/Main.txt the way the engine reads it. Returns problems.
+
+    The game merges the mod's Main.dat into its own (LoadDatConfigAndModOverrides
+    -> MergeFrom) and then executes two blocks from it as script code:
+    BV/OnStart on a new game (TGalaxy.RunConfigOnStartHandlers, generation stage
+    16) and BV/OnLoad on every save load (RunConfigOnLoadHandlers). Those are the
+    hooks that let a mod start — and restart — without a new game, and they are
+    also the easiest thing to get silently wrong, so the traps are checked here
+    instead of in a playthrough: see docs/FAST_ITERATION.md.
+    """
+    main_txt = mod_dir / "src" / "CFG" / "Main.txt"
+    if not main_txt.is_file():
+        return []                      # config-only mod (mods/FastGalaxy)
+    srblockpar = load_srblockpar(args)
+    if srblockpar is None:
+        return []
+    bp = _bp_kinds(srblockpar)
+
+    try:
+        tree = srblockpar.read_text(main_txt)
+    except Exception as e:             # BlockParError and friends
+        return [f"{main_txt.name}: the DAT parser cannot read it ({e})."]
+
+    problems: list[str] = []
+    for param in _comment_in_value(main_txt.read_text(encoding="utf-16", errors="replace")):
+        problems.append(
+            f"{main_txt.name}: the value of '{param}' carries a '//' comment — the DAT "
+            "parser cuts the value at '//', so the engine runs a truncated statement "
+            "and reports nothing. Put comments on their own lines.")
+
+    registered = set()
+    data = _child_block(tree, "Data", bp)
+    script = _child_block(data, "Script", bp) if data is not None else None
+    if script is not None:
+        registered = {e.name for e in script.entries if e.kind == bp.KIND_STRING}
+
+    bv = _child_block(tree, "BV", bp)
+    if bv is None:
+        if registered:
+            log("preflight", f"{main_txt.name}: no BV block — the script starts only "
+                             "from its own onGlobal/GRun (works, but a save cannot "
+                             "re-attach it; see docs/FAST_ITERATION.md)")
+        return []
+
+    for e in bv.entries:
+        if e.kind == bp.KIND_STRING and e.name == "BV":
+            problems.append(f"{main_txt.name}: a param named BV inside the BV block "
+                            "overwrites the game version in the merged Main.dat and "
+                            "the exe then reports a build version mismatch. Remove it.")
+
+    for hook, guarded in (("OnStart", False), ("OnLoad", True)):
+        node = _child_block(bv, hook, bp)
+        if node is None:
+            if hook == "OnLoad" and registered:
+                log("preflight", f"{main_txt.name}: no BV/OnLoad — an existing save "
+                                 "will not re-attach this script after a rebuild")
+            continue
+        handlers = [e for e in node.entries if e.kind == bp.KIND_BLOCK]
+        if not handlers:
+            problems.append(f"{main_txt.name}: BV/{hook} has no handler block; the "
+                            f"engine runs each BLOCK inside {hook} as one script.")
+        for h in handlers:
+            text = _concatenate_values(h.block, bp)
+            if not text.strip():
+                problems.append(f"{main_txt.name}: BV/{hook}/{h.name} is empty — the "
+                                "engine would execute an empty script.")
+                continue
+            log("preflight", f"{main_txt.name}: BV/{hook}/{h.name} executes: {text}")
+            for called in _script_run_names(text):
+                if called not in registered:
+                    problems.append(
+                        f"{main_txt.name}: BV/{hook} runs ScriptRun('{called}') but "
+                        f"Data/Script registers {sorted(registered) or 'nothing'}. "
+                        "ScriptRun takes the script NAME from Data/Script, not the "
+                        "'Script.<Name>' path.")
+            if guarded and "ScriptRun(" in text and "IsScriptActive(" not in text:
+                problems.append(
+                    f"{main_txt.name}: BV/{hook}/{h.name} calls ScriptRun without an "
+                    "IsScriptActive guard — SF_ScriptRun matches the name against "
+                    "ScriptFileName ('Script.<Name>'), never finds it, and starts a "
+                    "second instance of the same script on every load.")
+    return problems
+
+
 def preflight(args, mod_dir: Path) -> list[str]:
     """Sanity-check the machine before any subprocess runs. Returns problems."""
     problems: list[str] = []
@@ -211,8 +380,15 @@ def preflight(args, mod_dir: Path) -> list[str]:
     enc_problems, _fixable = check_encodings(mod_dir)
     problems.extend(enc_problems)
 
-    # 5. build stage needs rsmc.exe, and rsmc.exe is Windows-only
-    if args.stage in ("build", "deploy", "all"):
+    # 4b. CFG/Main.txt as the engine will read it: BV/OnStart + BV/OnLoad
+    problems.extend(check_main_dat(mod_dir, args))
+
+    # 5. build stage needs rsmc.exe, and rsmc.exe is Windows-only.
+    #    A config-only mod has no .rsm to compile, so it needs neither — it can
+    #    be built and deployed on any OS (that is what mods/FastGalaxy is).
+    if args.stage in ("build", "deploy", "all") and is_config_only(mod_dir):
+        log("preflight", f"{mod_dir.name}: no script (engine=none) — rsmc.exe not needed")
+    elif args.stage in ("build", "deploy", "all"):
         if args.rsmc and not Path(args.rsmc).is_file():
             problems.append(f"--rsmc {args.rsmc}: file not found.")
         elif not args.rsmc:
@@ -259,8 +435,29 @@ def preflight(args, mod_dir: Path) -> list[str]:
     return problems
 
 
+def is_config_only(mod_dir: Path) -> bool:
+    """True when srmod.json declares no script at all (`mods/FastGalaxy`).
+
+    `srmod build` supports that shape (`"script": {"engine": "none"}`,
+    srmod/build.py:737): everything it produces — Main.dat, Lang.dat,
+    CacheData.dat, ModuleInfo.txt — comes from sr-modkit's own Python, so
+    rsmc.exe, the only Windows-only tool in the chain, is not needed.
+    """
+    try:
+        proj = json.loads((mod_dir / "srmod.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False                     # unreadable config: not our call here
+    script_cfg = proj.get("script") or {}
+    return not script_cfg.get("entry") and script_cfg.get("engine") in (None, "none")
+
+
 def check_script_name(mod_dir: Path) -> tuple[bool, str]:
-    """scriptName("X") in main.rsm must equal srmod.json "name"."""
+    """scriptName("X") in main.rsm must equal srmod.json "name".
+
+    A config-only mod (`script.engine == "none"`, or no `script` at all, like
+    mods/FastGalaxy which ships a Lang.dat and nothing else) has no entry point
+    to check; sr-modkit's own build accepts that shape.
+    """
     import re
 
     cfg = mod_dir / "srmod.json"
@@ -270,11 +467,14 @@ def check_script_name(mod_dir: Path) -> tuple[bool, str]:
     except (OSError, ValueError) as e:
         return False, f"{cfg}: cannot read ({e})"
     name = proj.get("name")
-    entry = (proj.get("script") or {}).get("entry")
+    script_cfg = proj.get("script") or {}
+    entry = script_cfg.get("entry")
     if entry:
         entry_path = mod_dir / entry
     if not name:
         return False, f"{cfg}: no \"name\"."
+    if entry_path is None and is_config_only(mod_dir):
+        return True, f"config-only mod \"{name}\" (no script): name check skipped"
     if entry_path is None or not entry_path.is_file():
         return False, f"{cfg}: script.entry missing or not found on disk."
     text = entry_path.read_text(encoding="utf-8", errors="replace")
@@ -537,7 +737,7 @@ def main(argv=None) -> int:
 
     # rsmc.exe: keep --rsmc when it points at a real file, otherwise hunt for
     # it next to the sr-modkit clone (that is where srmod autodetect looks too).
-    if args.stage in ("build", "deploy", "all"):
+    if args.stage in ("build", "deploy", "all") and not is_config_only(mod_dir):
         rsmc, why = find_rsmc(args)
         if rsmc is not None:
             if args.rsmc != str(rsmc):
@@ -561,7 +761,7 @@ def main(argv=None) -> int:
         if rc != 0:
             die("lint failed — fix the findings above, then rerun.", 2)
         if args.stage == "lint":
-            return finish(args, 0)
+            return finish(args, 0, mod_dir)
 
     if args.stage in ("build", "deploy", "all"):
         rc = stage_build(args, mod_dir)
@@ -572,7 +772,7 @@ def main(argv=None) -> int:
                 rc = stage_audit(args, mod_dir)
                 if rc != 0:
                     die("audit failed (see docs/VERIFICATION.md)", 2)
-            return finish(args, 0)
+            return finish(args, 0, mod_dir)
 
     if args.stage in ("deploy", "all"):
         rc = stage_deploy(args, mod_dir)
@@ -584,15 +784,28 @@ def main(argv=None) -> int:
         if rc != 0:
             die("audit failed (see docs/VERIFICATION.md)", 2)
 
-    return finish(args, 0)
+    return finish(args, 0, mod_dir)
 
 
-def finish(args, code: int) -> int:
+def finish(args, code: int, mod_dir: Path | None = None) -> int:
     if code == 0 and args.stage in ("build", "deploy", "all"):
         print()
-        print("NEXT: start the game -> Mods -> enable the mod -> start a NEW game.")
-        print("      With vProbe enabled, RC diagnostics are expected; at an SB/CB")
-        print("      base the probe and research item should appear. Undock/redock to retest.")
+        if mod_dir is not None and is_config_only(mod_dir):
+            print("NEXT: start the game -> Mods -> enable the mod -> Apply -> a NEW game.")
+            print("      This mod has no script: it only overrides config values, and the")
+            print("      galaxy is generated once and then lives in the save, so a config")
+            print("      mod like this one affects NEW games only. A mod with a script is")
+            print("      the other way round — rebuild and just load the existing save")
+            print("      (docs/FAST_ITERATION.md).")
+        else:
+            print("NEXT: start the game -> Mods -> enable the mod.")
+            print("      A NEW game is needed only once per campaign: after that, edit")
+            print("      the sources, rerun this script and just LOAD THE SAVE — the")
+            print("      engine re-reads the .scr on load and BV/OnLoad re-attaches the")
+            print("      script (docs/FAST_ITERATION.md).")
+            print("      With vProbe enabled, RC diagnostics are expected; a Science")
+            print("      base is generated in the starting system, so the research item")
+            print("      can be checked without flying anywhere.")
     elif code == 0:
         print("\n(sources check out; nothing was compiled)")
     if args.pause:

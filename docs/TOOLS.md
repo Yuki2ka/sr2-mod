@@ -21,7 +21,7 @@ src/CFG/Main.txt               ──►  build/CFG/Main.dat         (script reg
 | Tool | What it is | Needed for | Windows only | Link |
 |---|---|---|---|---|
 | **sr-modkit** (`srmod`) | pure-Python build tool: scaffold, lint, build, deploy, decompile | **everything** | no | https://github.com/ArtYudin89/sr-modkit |
-| **rsmc.exe** | console compiler `.rsm -> .scr`, part of RScript releases | `build` stage | **yes** | https://github.com/indiemagpie/RScript (releases → `rsmc.zip`) |
+| **rsmc.exe** | console compiler `.rsm -> .scr`, part of RScript releases | `build` stage — but **not** a config-only mod (`"script": {"engine": "none"}`, e.g. `mods/FastGalaxy`): it has no `.rsm`, so it builds and deploys on any OS | **yes** | https://github.com/indiemagpie/RScript (releases → `rsmc.zip`) |
 | **Python 3.9+** | runs `srmod` and the scripts in `tools/` | everything | no | https://www.python.org/downloads/windows/ |
 | **SRHD-XenoModKit** | optional second-opinion auditor (DAT/SCR/RSON, runtime lint, releases) | `--audit` | no (Windows-oriented) | https://github.com/Xenomorphchyma/SRHD-XenoModKit |
 | RScript (GUI) | node editor; only to *decompile* somebody else's `.scr` into `.rson` | `srmod open` / `srmod import` | yes | https://github.com/indiemagpie/RScript |
